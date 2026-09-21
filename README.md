@@ -108,6 +108,58 @@ Nhánh Ollama gọi `POST /api/generate` với JSON Schema. Schema chỉ giúp o
 parse được và có đúng khung field; validator sau generation vẫn cần thiết.
 Pipeline không âm thầm fallback từ Ollama sang mock.
 
+### Chạy Ollama bằng GPU và chia phần còn thiếu sang CPU
+
+Ollama không có tham số để đặt cứng tỷ lệ GPU/CPU theo phần trăm. Scheduler tự
+đặt các layer vừa VRAM lên GPU và phần còn lại vào RAM; `ollama ps` sẽ hiển thị
+ví dụ `48%/52% CPU/GPU`. Script cấu hình trong repo là
+[`scripts/start-ollama-gpu-cpu.ps1`](scripts/start-ollama-gpu-cpu.ps1).
+
+Trên máy Windows hiện tại, cần cập nhật NVIDIA driver lên tối thiểu 550 và
+cập nhật Ollama trước. Driver đang được phát hiện là `546.30`, còn log Ollama
+ghi `CUDA error: device kernel image is invalid`, nên chỉ đổi cổng hoặc tăng
+timeout không sửa được lỗi này.
+
+Sau khi quit Ollama ở system tray, mở một PowerShell riêng và chạy:
+
+```powershell
+Set-Location 'C:\disk D\mock-s02-7'
+.\scripts\start-ollama-gpu-cpu.ps1 -Port 11436 -GpuId 0 -ContextLength 32768
+```
+
+Ở PowerShell khác, kiểm tra server và phân bổ:
+
+```powershell
+$env:OLLAMA_HOST = '127.0.0.1:11436'
+Invoke-RestMethod 'http://127.0.0.1:11436/api/version'
+ollama ps
+nvidia-smi
+```
+
+Nếu `ollama ps` hiện `100% GPU` thì toàn bộ model vừa VRAM; nếu hiện dạng
+`CPU/GPU` thì model đã được chia giữa RAM và VRAM. Pipeline hiện gửi
+`num_ctx=32768` trực tiếp trong request, vì vậy giá trị `OLLAMA_CONTEXT_LENGTH`
+chỉ là mặc định cho server và không ghi đè tham số request này.
+
+Khi server đã qua probe, chạy pipeline bằng đúng cổng đó:
+
+```powershell
+$env:PYTHONPATH = "$PWD\src"
+py -3.13 -m arch_context_pipeline `
+  --input .\examples\clinic_input.json `
+  --kb 'C:\disk D\KnowledgeBase_SoftwareArchitect' `
+  --out .\out\clinic-ollama-qwen3-gpu-cpu `
+  --top-k 1 `
+  --generator ollama `
+  --model qwen3:4b `
+  --ollama-url 'http://127.0.0.1:11436' `
+  --llm-timeout 1200
+```
+
+Log server Windows nằm ở `%LOCALAPPDATA%\Ollama\server.log`. Nếu probe còn
+trả `device kernel image is invalid`, chưa nên chạy pipeline; kiểm tra lại
+driver, phiên bản Ollama và log GPU trước.
+
 Chạy test:
 
 ```powershell
