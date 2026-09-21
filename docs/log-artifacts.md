@@ -19,7 +19,7 @@ chạy xong. Vì vậy:
 |---|---|---|
 | `input.json` | input raw được lưu lại | không đánh giá input |
 | `requirements.json` | normalized actors/requirements/NFR/constraints | normalized không đồng nghĩa semantic đúng |
-| `retrieval-evidence.json` | per-query evidence, score, rank, matched terms, source locator, exclusions | ranking/provenance, không phải ground truth |
+| `retrieval-evidence.json` | per-query evidence, score, rank, matched terms, content-term/OOV audit, source locator, exclusions | ranking/provenance, không phải ground truth |
 | `architecture-context.json` | normalized input + evidence + profile + generation contract | context đã đóng gói, không chứng minh LLM hiểu |
 | `llm-prompt.md` | prompt hoàn chỉnh dạng text | không chứng minh request đã gửi |
 | `architecture-ir.json` | candidate IR nguồn cho hai renderer | không chứng minh topology runtime |
@@ -124,4 +124,5 @@ Nếu file không tồn tại trong mock run, đó là trạng thái đúng; kh�
 6. Đọc `architecture-ir.json` rồi `validation.json`; unresolved concepts và
    warning không được xóa để làm report đẹp.
 7. Đọc `handoff-gate.json`; `blocked` là kết quả expected khi chưa có owner
-   acceptance hoặc Stage 2 adapters.
+   acceptance, Stage 2 adapters hoặc retrieval audit phát hiện query ngoài
+   miền (`CHK-008`).

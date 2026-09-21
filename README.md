@@ -130,7 +130,7 @@ Bảng đầy đủ về field và lệnh trích xuất nằm ở
 |---|---|---|
 | `input.json` | raw input đã dùng cho run | input đúng domain |
 | `requirements.json` | normalized facts/requirements | requirement semantic đúng |
-| `retrieval-evidence.json` | query, evidence literal, rank/score, matched terms và provenance | top-1 là đáp án kiến trúc |
+| `retrieval-evidence.json` | query, evidence literal, rank/score, matched terms, content-term audit và provenance | top-1 là đáp án kiến trúc |
 | `architecture-context.json` | context package gửi cho generator | LLM đã hiểu đúng context |
 | `llm-prompt.md` | prompt/contract dạng đọc được | model đã chạy thành công |
 | `generation-run.json` | generator, model, run id, output hashes và claim boundary | chất lượng model |
@@ -196,6 +196,37 @@ Khi audit một row, phải đối chiếu ít nhất `query_text` → `matched_
 `evidence_id` → `source_path/source_locator` → file thật trong KB. `rrf_score`
 chỉ là score xếp hạng, không phải probability, confidence hoặc percentage
 relevance.
+
+### Audit input ngoài miền KB
+
+Để kiểm tra pipeline có nhận diện query lạ hay chỉ ép trả top-k, chạy fixture:
+
+```powershell
+py -3.13 -m arch_context_pipeline `
+  --input .\examples\out_of_domain_cryobot_input.json `
+  --kb 'C:\disk D\KnowledgeBase_SoftwareArchitect' `
+  --out .\out\ood-cryobot-audit `
+  --top-k 3
+```
+
+Đọc trường `retrieval_audit` trong
+`out/ood-cryobot-audit/retrieval-evidence.json`:
+
+```powershell
+$audit = Get-Content '.\out\ood-cryobot-audit\retrieval-evidence.json' -Raw |
+  ConvertFrom-Json
+
+$audit.retrieval_audit | Select-Object overall_status, weak_query_ids
+$audit.retrieval_audit.queries |
+  Select-Object query_id, support_status, content_coverage,
+    known_content_terms, oov_content_terms, top_evidence_id
+```
+
+`out_of_domain_candidate` là cảnh báo heuristic dựa trên content-term overlap
+và OOV terms, không phải một OOD classifier đã được benchmark. Pipeline vẫn
+trả top-k để giữ audit trail, nhưng thêm `CHK-008=fail`, chuyển validation
+sang `invalid` và giữ handoff gate `blocked`; không được đọc các case đó như
+evidence phù hợp.
 
 ## Retrieval và nguồn công thức
 
