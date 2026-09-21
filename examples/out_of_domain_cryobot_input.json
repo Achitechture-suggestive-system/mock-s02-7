@@ -1,0 +1,64 @@
+{
+  "case_id": "case-ood-900002",
+  "canonical_language": "en",
+  "raw_text": "A xenobiology expedition uses autonomous subglacial cryobot pods to map bioluminescent mycelium beneath Europa's ice shell. The fleet must coordinate spectrometry, quarantine unknown spores, preserve under-ice telemetry, and operate without a surface uplink. This deliberately unusual query is an out-of-domain audit fixture; it must not be treated as an architecture requirement supported by the current software-architecture KB.\nActors: Cryobot Swarm Cartographer, Under-Ice Biosafety Steward\nFR-001: The cryobot swarm shall triangulate xenobiological mycelium colonies from synchronized spectrometry and gravimetric observations.\nFR-002: The cartographer shall reconcile asynchronous cryobot sightings into a subglacial spore atlas without collapsing uncertain observations.\nFR-003: The biosafety steward shall quarantine bioluminescent spore signatures before any under-ice expedition maneuver is authorized.\nNFR-001: The cryobot telemetry loop shall preserve timestamp ordering during intermittent Europan ice-shell acoustic relays.\nC-001: No surface uplink may expose raw xenobiology observations before quarantine review completes.",
+  "problem_statement": "A xenobiology expedition coordinates autonomous subglacial cryobot pods that map bioluminescent mycelium beneath Europa's ice shell.",
+  "system_summary": "A cryobot swarm cartography and biosafety workflow for under-ice spectrometry, uncertain spore observations, acoustic telemetry and quarantine review.",
+  "actors": [
+    {
+      "id": "ACT-OOD-001",
+      "name": "Cryobot Swarm Cartographer",
+      "description": "An expedition operator who reconciles synchronized spectrometry and gravimetric observations from autonomous cryobot pods."
+    },
+    {
+      "id": "ACT-OOD-002",
+      "name": "Under-Ice Biosafety Steward",
+      "description": "A reviewer who quarantines uncertain bioluminescent spore signatures before maneuver authorization."
+    }
+  ],
+  "functional_requirements": [
+    {
+      "id": "FR-OOD-001",
+      "statement": "The cryobot swarm shall triangulate xenobiological mycelium colonies from synchronized spectrometry and gravimetric observations.",
+      "priority": "must"
+    },
+    {
+      "id": "FR-OOD-002",
+      "statement": "The cartographer shall reconcile asynchronous cryobot sightings into a subglacial spore atlas without collapsing uncertain observations.",
+      "priority": "must"
+    },
+    {
+      "id": "FR-OOD-003",
+      "statement": "The biosafety steward shall quarantine bioluminescent spore signatures before any under-ice expedition maneuver is authorized.",
+      "priority": "must"
+    }
+  ],
+  "non_functional_requirements": [
+    {
+      "id": "NFR-OOD-001",
+      "category": "temporal_integrity",
+      "statement": "The cryobot telemetry loop shall preserve timestamp ordering during intermittent Europan ice-shell acoustic relays.",
+      "priority": "should"
+    }
+  ],
+  "constraints": [
+    {
+      "id": "C-OOD-001",
+      "statement": "No surface uplink may expose raw xenobiology observations before quarantine review completes."
+    }
+  ],
+  "architecture_hints": {},
+  "domain_terms": [
+    "xenobiology",
+    "subglacial",
+    "cryobot",
+    "bioluminescent mycelium",
+    "Europan ice shell",
+    "gravimetric observation",
+    "spore atlas",
+    "biosafety quarantine",
+    "under-ice telemetry",
+    "acoustic relay",
+    "surface uplink"
+  ]
+}

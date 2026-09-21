@@ -1,5 +1,6 @@
 import json
 import math
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -16,12 +17,14 @@ from arch_context_pipeline.pipeline import (
     normalize_input,
     retrieve,
     reciprocal_rank_fusion,
+    run_pipeline,
     validate_candidate,
 )
 
 
 KB = Path(r"C:\disk D\KnowledgeBase_SoftwareArchitect")
 EXAMPLE = Path(__file__).parents[1] / "examples" / "clinic_input.json"
+OOD_EXAMPLE = Path(__file__).parents[1] / "examples" / "out_of_domain_cryobot_input.json"
 
 
 class PipelineTests(unittest.TestCase):
@@ -42,6 +45,37 @@ class PipelineTests(unittest.TestCase):
         self.assertIn("evidence_id", self.retrieval["queries"][0]["evidence"][0])
         self.assertIn("source_locator", self.retrieval["queries"][0]["evidence"][0])
         self.assertEqual(self.retrieval["method"]["semantic"]["status"], "not_configured")
+        self.assertIn("retrieval_audit", self.retrieval)
+        self.assertIn("matched_content_terms", self.retrieval["queries"][0]["evidence"][0])
+
+    def test_normalize_preserves_raw_text_for_traceability(self):
+        self.assertEqual(self.requirements["raw_text"], self.input_data["raw_text"])
+
+    def test_manifest_file_count_matches_rerun_bundle(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            output_dir = Path(temporary_directory) / "bundle"
+            run_pipeline(EXAMPLE, KB, output_dir, top_k=1)
+            manifest = json.loads((output_dir / "manifest.json").read_text(encoding="utf-8"))
+            self.assertEqual(manifest["file_count"], len(list(output_dir.iterdir())))
+
+    def test_out_of_domain_input_is_flagged_by_retrieval_audit(self):
+        data = json.loads(OOD_EXAMPLE.read_text(encoding="utf-8"))
+        result = retrieve(KB, normalize_input(data), top_k=3)
+
+        audit = result["retrieval_audit"]
+        self.assertEqual(audit["overall_status"], "out_of_domain_candidate")
+        self.assertEqual(len(audit["weak_query_ids"]), len(result["queries"]))
+        self.assertTrue(any(item["oov_content_terms"] for item in audit["queries"]))
+        self.assertTrue(all(query["support_status"] != "lexically_supported" for query in result["queries"]))
+
+        context = build_context(KB, normalize_input(data), result)
+        ir = generate_mock_ir(context)
+        component = generate_component_puml(ir)
+        deployment = generate_deployment_puml(ir)
+        validation = validate_candidate(ir, component, deployment, audit)
+        self.assertEqual(validation["overall_status"], "invalid")
+        self.assertEqual(validation["retrieval_audit_status"], "out_of_domain_candidate")
+        self.assertEqual(next(check for check in validation["checks"] if check["check_id"] == "CHK-008")["result"], "fail")
 
     def test_lexical_exactness(self):
         data = {
