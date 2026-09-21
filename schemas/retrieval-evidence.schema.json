@@ -26,6 +26,10 @@
           "rag_eligible": {"type": "boolean"},
           "leakage": {"type": "object"},
           "query_tokens": {"type": "array", "items": {"type": "string"}},
+          "audit_content_terms": {"type": "array", "items": {"type": "string"}},
+          "audit_known_content_terms": {"type": "array", "items": {"type": "string"}},
+          "audit_oov_content_terms": {"type": "array", "items": {"type": "string"}},
+          "support_status": {"type": "string"},
           "evidence": {
             "type": "array",
             "items": {
@@ -47,6 +51,7 @@
                 "reranker_rank": {"type": ["integer", "null"], "minimum": 1},
                 "reranker_score": {"type": ["number", "null"]},
                 "matched_terms": {"type": "array", "items": {"type": "string"}},
+                "matched_content_terms": {"type": "array", "items": {"type": "string"}},
                 "source_path": {"type": "string"},
                 "source_locator": {"type": ["string", "null"]},
                 "review_status": {"type": ["string", "null"]},
@@ -59,6 +64,7 @@
       }
     },
     "retrieved_cases": {"type": "array", "items": {"type": "object"}},
+    "retrieval_audit": {"type": "object"},
     "exclusions": {
       "type": "object",
       "required": ["input_requirements", "kb_evidence"],

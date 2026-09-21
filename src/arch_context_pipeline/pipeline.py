@@ -65,6 +65,24 @@ LEGACY_STOPWORDS = {
     "một", "các", "được", "thì", "khi", "này", "từ", "với",
 }
 
+# These terms remain in the BM25F score and in `matched_terms`. They are used
+# only by the retrieval audit so a generic overlap is not mistaken for strong
+# domain support. The audit is a conservative heuristic, not a relevance
+# model or an OOD classifier.
+RETRIEVAL_AUDIT_GENERIC_TERMS = {
+    "a", "an", "and", "are", "as", "at", "be", "by", "for", "from", "has",
+    "have", "in", "is", "it", "of", "on", "or", "that", "the", "their",
+    "this", "to", "with", "will", "shall", "must", "should", "only", "through",
+    "use", "uses", "using", "system", "service", "services", "application",
+    "applications", "platform", "software", "data", "information", "user", "users",
+    "client", "clients", "request", "requests", "interface", "interfaces", "access",
+    "support", "supports", "provide", "provides", "expose", "exposes", "external",
+    "internal", "environment", "environments",
+}
+RETRIEVAL_AUDIT_MIN_KNOWN_CONTENT_TERMS = 2
+RETRIEVAL_AUDIT_MIN_TOP_CONTENT_MATCHES = 2
+RETRIEVAL_AUDIT_MIN_TOP_CONTENT_COVERAGE = 0.10
+
 LEGACY_SYNONYMS = {
     "appointments": "appointment",
     "appointment": "appointment",
@@ -231,6 +249,7 @@ def normalize_input(data: dict[str, Any]) -> dict[str, Any]:
         "case_id": data.get("case_id", "case-900001"),
         "canonical_language": data.get("canonical_language", "vi"),
         "status": "normalized",
+        "raw_text": raw_text,
         "problem_statement": problem,
         "system_summary": summary,
         "actors": actor_items,
@@ -698,9 +717,20 @@ def retrieve(
         return dot / (left_norm * right_norm) if left_norm and right_norm else 0.0
 
     query_outputs: list[dict[str, Any]] = []
+    query_support_audit: list[dict[str, Any]] = []
     for query in queries:
         query_text = str(query["query_text"])
         query_tf = Counter(tokenize(query_text))
+        query_tokens = sorted(query_tf)
+        audit_content_terms = sorted(
+            term for term in query_tokens
+            if term not in RETRIEVAL_AUDIT_GENERIC_TERMS
+        )
+        known_content_terms = sorted(
+            term for term in audit_content_terms
+            if term in field_index["idf"]
+        )
+        oov_content_terms = sorted(set(audit_content_terms) - set(known_content_terms))
         lexical_rows: list[dict[str, Any]] = []
         for document in field_index["documents"]:
             unit = document["unit"]
@@ -716,10 +746,15 @@ def retrieve(
                 for counts in document["field_counts"].values()
                 for term in counts
             })
+            matched_content_terms = sorted(
+                term for term in matched_terms
+                if term not in RETRIEVAL_AUDIT_GENERIC_TERMS
+            )
             lexical_rows.append({
                 "evidence_id": unit["evidence_id"],
                 "lexical_score": lexical_score,
                 "matched_terms": matched_terms,
+                "matched_content_terms": matched_content_terms,
             })
         lexical_rows.sort(key=lambda row: (-row["lexical_score"], row["evidence_id"]))
         lexical_rank = {row["evidence_id"]: rank for rank, row in enumerate(lexical_rows, 1)}
@@ -793,6 +828,7 @@ def retrieve(
                 "reranker_rank": reranker_rank.get(evidence_id),
                 "reranker_score": reranker_scores.get(evidence_id),
                 "matched_terms": lexical_by_id[evidence_id]["matched_terms"],
+                "matched_content_terms": lexical_by_id[evidence_id]["matched_content_terms"],
                 "source_path": unit["source_path"],
                 "source_locator": unit["source_locator"],
                 "review_status": unit["review_status"],
@@ -804,6 +840,34 @@ def retrieve(
                     "retrieval_basis": "stakeholder requirement query; architecture hints excluded",
                 },
             })
+        top_evidence = evidence[0] if evidence else None
+        top_content_terms = top_evidence["matched_content_terms"] if top_evidence else []
+        if not audit_content_terms:
+            support_status = "insufficient_content_terms"
+        elif (
+            len(known_content_terms) >= RETRIEVAL_AUDIT_MIN_KNOWN_CONTENT_TERMS
+            and (
+                len(top_content_terms) >= RETRIEVAL_AUDIT_MIN_TOP_CONTENT_MATCHES
+                or len(top_content_terms) / max(len(audit_content_terms), 1)
+                >= RETRIEVAL_AUDIT_MIN_TOP_CONTENT_COVERAGE
+            )
+        ):
+            support_status = "lexically_supported"
+        else:
+            support_status = "weak_lexical_support"
+        query_support_audit.append({
+            "query_id": query["query_id"],
+            "content_query_terms": audit_content_terms,
+            "known_content_terms": known_content_terms,
+            "oov_content_terms": oov_content_terms,
+            "top_evidence_id": top_evidence["evidence_id"] if top_evidence else None,
+            "top_matched_content_terms": top_content_terms,
+            "content_coverage": round(
+                len(top_content_terms) / max(len(audit_content_terms), 1),
+                12,
+            ),
+            "support_status": support_status,
+        })
         query_outputs.append({
             "query_id": query["query_id"],
             "requirement_id": query["requirement_id"],
@@ -812,9 +876,25 @@ def retrieve(
             "source_refs": query["source_refs"],
             "rag_eligible": query["rag_eligible"],
             "leakage": query["leakage"],
-            "query_tokens": sorted(query_tf),
+            "query_tokens": query_tokens,
+            "audit_content_terms": audit_content_terms,
+            "audit_known_content_terms": known_content_terms,
+            "audit_oov_content_terms": oov_content_terms,
+            "support_status": support_status,
             "evidence": evidence,
         })
+
+    weak_query_ids = [
+        item["query_id"]
+        for item in query_support_audit
+        if item["support_status"] != "lexically_supported"
+    ]
+    if not query_support_audit or len(weak_query_ids) == len(query_support_audit):
+        audit_overall_status = "out_of_domain_candidate"
+    elif weak_query_ids:
+        audit_overall_status = "mixed_lexical_support"
+    else:
+        audit_overall_status = "lexically_supported"
 
     case_rows: dict[str, dict[str, Any]] = {}
     for query_output in query_outputs:
@@ -905,6 +985,18 @@ def retrieve(
         },
         "queries": query_outputs,
         "retrieved_cases": ranked_cases,
+        "retrieval_audit": {
+            "overall_status": audit_overall_status,
+            "weak_query_ids": weak_query_ids,
+            "queries": query_support_audit,
+            "policy": {
+                "generic_terms_excluded": sorted(RETRIEVAL_AUDIT_GENERIC_TERMS),
+                "minimum_known_content_terms": RETRIEVAL_AUDIT_MIN_KNOWN_CONTENT_TERMS,
+                "minimum_top_content_matches": RETRIEVAL_AUDIT_MIN_TOP_CONTENT_MATCHES,
+                "minimum_top_content_coverage": RETRIEVAL_AUDIT_MIN_TOP_CONTENT_COVERAGE,
+            },
+            "claim_boundary": "Heuristic lexical support audit only; it is not a relevance label, OOD classifier or semantic correctness proof.",
+        },
         "exclusions": {
             "input_requirements": query_exclusions,
             "kb_evidence": evidence_exclusions,
@@ -1340,7 +1432,12 @@ def generate_deployment_puml(ir: dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
-def validate_candidate(ir: dict[str, Any], component_puml: str, deployment_puml: str) -> dict[str, Any]:
+def validate_candidate(
+    ir: dict[str, Any],
+    component_puml: str,
+    deployment_puml: str,
+    retrieval_audit: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
     checks: list[dict[str, Any]] = []
     elements = {element["alias"]: element for element in ir["components"]}
     aliases_unique = len(elements) == len(ir["components"])
@@ -1358,6 +1455,12 @@ def validate_candidate(ir: dict[str, Any], component_puml: str, deployment_puml:
     relation_labels_present = all(f"[{relation['relation_id']}]" in component_puml for relation in ir["relations"])
     checks.append({"check_id":"CHK-006", "result":"pass" if relation_labels_present and "instance-of:" in deployment_puml else "fail", "description":"PlantUML contains typed relation IDs and instance-of allocations."})
     checks.append({"check_id":"CHK-007", "result":"warning", "description":"No human review or PlantUML renderer execution is claimed by this prototype."})
+    if retrieval_audit and retrieval_audit.get("overall_status") == "out_of_domain_candidate":
+        checks.append({
+            "check_id": "CHK-008",
+            "result": "fail",
+            "description": "Retrieval audit flags every query as weak lexical support; the candidate is outside the observed KB domain.",
+        })
     failed = [check for check in checks if check["result"] == "fail"]
     return {
         "schema_version": MOCK_SCHEMA_VERSION,
@@ -1366,6 +1469,7 @@ def validate_candidate(ir: dict[str, Any], component_puml: str, deployment_puml:
         "overall_status": "invalid" if failed else "ready_for_review",
         "checks": checks,
         "unresolved_concepts": ir["unresolved_concepts"],
+        "retrieval_audit_status": retrieval_audit.get("overall_status") if retrieval_audit else None,
         "claim_boundary": "Static consistency only; not proof of semantic correctness, runtime behavior, performance or production suitability.",
     }
 
@@ -1448,7 +1552,12 @@ def run_pipeline(
     _validate_ir_shape(ir)
     component_puml = generate_component_puml(ir)
     deployment_puml = generate_deployment_puml(ir)
-    validation = validate_candidate(ir, component_puml, deployment_puml)
+    validation = validate_candidate(
+        ir,
+        component_puml,
+        deployment_puml,
+        retrieval["retrieval_audit"],
+    )
     review = {
         "schema_version": MOCK_SCHEMA_VERSION,
         "candidate_id": ir["candidate_id"],
@@ -1533,6 +1642,10 @@ def run_pipeline(
         "claim_boundary": "For mock runs this is deterministic generation; for Ollama runs it records a local LLM generation. Neither is production architecture proof.",
     }
     write_json(output_dir / "generation-run.json", generation_run)
-    manifest["file_count"] = len([path for path in output_dir.iterdir() if path.is_file()]) + 1
+    manifest["file_count"] = len([
+        path
+        for path in output_dir.iterdir()
+        if path.is_file() and path.name != "manifest.json"
+    ]) + 1
     write_json(output_dir / "manifest.json", manifest)
     return {"requirements": requirements, "retrieval": retrieval, "ir": ir, "validation": validation, "gate": gate, "output_dir": str(output_dir)}
