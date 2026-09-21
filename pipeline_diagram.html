@@ -1,0 +1,790 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <script src="https://www.gstatic.com/antigravity/web/dev/tailwindcss.min.js"></script>
+  <style>
+    .artifact-node {
+      border: 1.5px solid var(--border);
+      background: var(--card);
+      color: var(--foreground);
+      border-radius: 8px;
+      padding: 6px 10px;
+      font-size: 11px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.18s;
+      display: inline-block;
+      min-width: 130px;
+      text-align: center;
+    }
+    .artifact-node:hover { opacity: 0.85; transform: translateY(-1px); }
+    .artifact-node.stage1 { border-color: #3b82f6; background: rgba(59,130,246,0.08); color: #3b82f6; }
+    .artifact-node.handoff { border-color: #f59e0b; background: rgba(245,158,11,0.08); color: #f59e0b; }
+    .artifact-node.stage2p { border-color: #10b981; background: rgba(16,185,129,0.08); color: #10b981; }
+    .artifact-node.stage2s { border-color: #8b5cf6; background: rgba(139,92,246,0.08); color: #8b5cf6; }
+    .artifact-node.output  { border-color: #ef4444; background: rgba(239,68,68,0.08); color: #ef4444; }
+    .arrow { color: var(--muted-foreground); font-size: 18px; margin: 0 4px; }
+    .step-block {
+      border: 1.5px solid var(--border);
+      border-radius: 10px;
+      padding: 10px 12px;
+      background: var(--card);
+      margin-bottom: 4px;
+    }
+    .step-label { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted-foreground); margin-bottom: 4px; }
+    .step-title { font-size: 12px; font-weight: 700; color: var(--foreground); }
+    .step-sub   { font-size: 10px; color: var(--muted-foreground); }
+
+    .tab-btn { padding: 5px 12px; border-radius: 6px; font-size: 12px; font-weight: 600; cursor: pointer; transition: all 0.15s; border: 1.5px solid var(--border); background: transparent; color: var(--muted-foreground); }
+    .tab-btn.active { background: var(--primary); color: var(--primary-foreground); border-color: var(--primary); }
+
+    .ex-btn { padding: 4px 10px; border-radius: 6px; font-size: 11px; font-weight: 600; cursor: pointer; transition: all 0.15s; border: 1.5px solid var(--border); background: transparent; color: var(--muted-foreground); }
+    .ex-btn.active { background: var(--accent); color: var(--foreground); border-color: var(--primary); }
+
+    .json-block { background: rgba(0,0,0,0.15); border: 1px solid var(--border); border-radius: 8px; padding: 10px; font-family: monospace; font-size: 10.5px; color: var(--foreground); white-space: pre; overflow-x: auto; line-height: 1.55; }
+    .badge { display: inline-block; padding: 1px 7px; border-radius: 99px; font-size: 9px; font-weight: 700; text-transform: uppercase; }
+    .badge-mock { background: rgba(245,158,11,0.15); color: #f59e0b; border: 1px solid rgba(245,158,11,0.3); }
+    .badge-kb   { background: rgba(16,185,129,0.12); color: #10b981; border: 1px solid rgba(16,185,129,0.25); }
+    .badge-real { background: rgba(59,130,246,0.12); color: #3b82f6; border: 1px solid rgba(59,130,246,0.25); }
+
+    .connector { width: 2px; background: var(--border); margin: 2px auto; }
+    .lane-header { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.07em; color: var(--muted-foreground); margin-bottom: 6px; }
+
+    .artifact-pill {
+      display: inline-flex; align-items: center; gap: 4px;
+      border-radius: 6px; padding: 3px 8px; font-size: 10px; font-weight: 600;
+      border: 1px solid; cursor: pointer; transition: all 0.15s;
+    }
+    .artifact-pill:hover { opacity: 0.8; }
+
+    details > summary { cursor: pointer; user-select: none; }
+    details > summary::-webkit-details-marker { display: none; }
+  </style>
+</head>
+<body class="bg-transparent text-[var(--foreground)] antialiased p-3">
+
+<!-- Header -->
+<div class="mb-3">
+  <h2 class="text-[var(--foreground)] font-bold text-base">Pipeline Stage 1 → Stage 2 · Data Flow Diagram</h2>
+  <p class="text-[var(--muted-foreground)] text-xs mt-0.5">Kiến trúc luồng dữ liệu · Schema artifacts · 3 ví dụ đầy đủ</p>
+</div>
+
+<!-- Tab switcher -->
+<div class="flex gap-2 mb-4">
+  <button class="tab-btn active" onclick="switchTab('arch')">📐 Architecture View</button>
+  <button class="tab-btn" onclick="switchTab('data')">📦 Data Flow Examples</button>
+</div>
+
+<!-- === ARCHITECTURE VIEW === -->
+<div id="tab-arch">
+
+  <!-- Legend -->
+  <div class="flex flex-wrap gap-2 mb-3">
+    <span class="artifact-node stage1" style="min-width:auto;padding:3px 8px;font-size:10px;">Stage 1</span>
+    <span class="artifact-node handoff" style="min-width:auto;padding:3px 8px;font-size:10px;">Handoff Gate</span>
+    <span class="artifact-node stage2p" style="min-width:auto;padding:3px 8px;font-size:10px;">Stage 2 · Prototype</span>
+    <span class="artifact-node stage2s" style="min-width:auto;padding:3px 8px;font-size:10px;">Stage 2 · Simulation</span>
+    <span class="artifact-node output" style="min-width:auto;padding:3px 8px;font-size:10px;">Final Output</span>
+  </div>
+
+  <div class="overflow-x-auto pb-2">
+    <div style="min-width: 860px;">
+
+      <!-- STAGE 1 ROW -->
+      <div class="step-block mb-1" style="border-color:#3b82f6;">
+        <div class="step-label" style="color:#3b82f6;">STAGE 1 — S01→S10</div>
+        <div class="flex items-center flex-wrap gap-1">
+          <div class="text-center">
+            <div class="text-[9px] text-[var(--muted-foreground)] mb-1">INPUT</div>
+            <span class="artifact-node stage1" onclick="showSchema('nl_input')">📝 NL Text<br/>User Input</span>
+          </div>
+          <span class="arrow">→</span>
+          <div class="text-center">
+            <div class="text-[9px] text-[var(--muted-foreground)] mb-1">S01/S02</div>
+            <span class="artifact-node stage1" onclick="showSchema('requirements')">📋 requirements<br/>.json</span>
+          </div>
+          <span class="arrow">→</span>
+          <div class="text-center">
+            <div class="text-[9px] text-[var(--muted-foreground)] mb-1">S04/S05</div>
+            <span class="artifact-node stage1" onclick="showSchema('retrieval')">🔍 retrieval-<br/>evidence.json</span>
+          </div>
+          <span class="arrow">→</span>
+          <div class="text-center">
+            <div class="text-[9px] text-[var(--muted-foreground)] mb-1">S06/S07</div>
+            <span class="artifact-node stage1" onclick="showSchema('ir')">🏗️ architecture-<br/>ir.json × 3</span>
+          </div>
+          <span class="arrow">→</span>
+          <div class="text-center">
+            <div class="text-[9px] text-[var(--muted-foreground)] mb-1">S07</div>
+            <span class="artifact-node stage1" onclick="showSchema('validation')">✅ validation<br/>.json</span>
+          </div>
+          <span class="arrow">→</span>
+          <div class="text-center">
+            <div class="text-[9px] text-[var(--muted-foreground)] mb-1">S08/S09</div>
+            <span class="artifact-node stage1" onclick="showSchema('review')">👁 design-<br/>review.json</span>
+          </div>
+          <span class="arrow">→</span>
+          <div class="text-center">
+            <div class="text-[9px] text-[var(--muted-foreground)] mb-1">S10 BUNDLE</div>
+            <span class="artifact-node stage1" onclick="showSchema('bundle')">📦 manifest<br/>.json (17 files)</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- HANDOFF GATE -->
+      <div class="step-block mb-1" style="border-color:#f59e0b;">
+        <div class="step-label" style="color:#f59e0b;">HANDOFF GATE — T01</div>
+        <div class="flex items-center gap-3">
+          <span class="artifact-node handoff" onclick="showSchema('gate')">🚦 Gate Check<br/>stage2_eligible?</span>
+          <div class="text-[10px] text-[var(--muted-foreground)]">
+            <div class="font-semibold">4 điều kiện cứng phải pass:</div>
+            <div>① owner_acceptance = "accepted" &nbsp; ② stage2_eligible = true</div>
+            <div>③ experiment_config tồn tại &nbsp;&nbsp;&nbsp;&nbsp; ④ stage2_adapters implemented</div>
+          </div>
+          <span class="arrow">→</span>
+          <span class="artifact-node handoff" onclick="showSchema('expconfig')">⚙️ experiment-<br/>config.json</span>
+          <span class="arrow">→</span>
+          <span class="artifact-node handoff" onclick="showSchema('perfcontext')">📊 performance-<br/>context.json</span>
+        </div>
+      </div>
+
+      <!-- STAGE 2 — 2 PARALLEL LANES -->
+      <div class="grid grid-cols-2 gap-2 mb-1">
+
+        <!-- PROTOTYPE LANE -->
+        <div class="step-block" style="border-color:#10b981;">
+          <div class="step-label" style="color:#10b981;">STAGE 2A — PROTOTYPE (T02a→T02e)</div>
+          <div class="flex flex-col gap-1.5">
+            <div class="flex items-center gap-1 flex-wrap">
+              <span class="artifact-node stage2p" style="min-width:auto" onclick="showSchema('capmap_proto')">T02a<br/>capability-map</span>
+              <span class="arrow text-sm">→</span>
+              <span class="artifact-node stage2p" style="min-width:auto" onclick="showSchema('genplan')">T02b<br/>gen-plan.json</span>
+            </div>
+            <div class="flex items-center gap-1 flex-wrap">
+              <span class="artifact-node stage2p" style="min-width:auto" onclick="showSchema('template')">T02c<br/>code templates</span>
+              <span class="arrow text-sm">→</span>
+              <span class="artifact-node stage2p" style="min-width:auto" onclick="showSchema('buildtest')">T02d<br/>build+test</span>
+              <span class="arrow text-sm">→</span>
+              <span class="artifact-node stage2p" style="min-width:auto" onclick="showSchema('bench')">T02e<br/>benchmark-<br/>report.json</span>
+            </div>
+            <div class="text-[9px] text-[var(--muted-foreground)]">method: "prototype" · measured_if_executed</div>
+          </div>
+        </div>
+
+        <!-- SIMULATION LANE -->
+        <div class="step-block" style="border-color:#8b5cf6;">
+          <div class="step-label" style="color:#8b5cf6;">STAGE 2B — SIMULATION PCM (T03a→T03d)</div>
+          <div class="flex flex-col gap-1.5">
+            <div class="flex items-center gap-1 flex-wrap">
+              <span class="artifact-node stage2s" style="min-width:auto" onclick="showSchema('capmap_sim')">T03a<br/>capability+demands</span>
+              <span class="arrow text-sm">→</span>
+              <span class="artifact-node stage2s" style="min-width:auto" onclick="showSchema('pcm')">T03b<br/>PCM 5 groups</span>
+            </div>
+            <div class="flex items-center gap-1 flex-wrap">
+              <span class="artifact-node stage2s" style="min-width:auto" onclick="showSchema('solver')">T03c<br/>solver+seeds</span>
+              <span class="arrow text-sm">→</span>
+              <span class="artifact-node stage2s" style="min-width:auto" onclick="showSchema('simout')">T03d<br/>simulation-<br/>report.json</span>
+            </div>
+            <div class="text-[9px] text-[var(--muted-foreground)]">method: "simulation" · predicted_if_executed</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- T04 COMPARISON -->
+      <div class="step-block" style="border-color:#ef4444;">
+        <div class="step-label" style="color:#ef4444;">FINAL — T04 COMPARISON</div>
+        <div class="flex items-center gap-3">
+          <div class="text-[10px] text-[var(--muted-foreground)]">benchmark-report.json<br/>+ simulation-report.json</div>
+          <span class="arrow" style="color:#ef4444;">→</span>
+          <span class="artifact-node output" onclick="showSchema('compare')">📊 comparison-<br/>report.json</span>
+          <div class="text-[10px] text-[var(--muted-foreground)]">
+            <div class="font-semibold">4 metrics (cùng schema):</div>
+            <div>p95 · throughput · cpu_utilisation · scaling_gain</div>
+            <div class="text-[9px] mt-0.5" style="color:#ef4444;">automatic_winner: null — Architect quyết định</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Schema detail panel -->
+  <div id="schema-panel" class="mt-3" style="display:none;">
+    <div class="step-block" style="border-color:var(--primary);">
+      <div class="flex items-center justify-between mb-2">
+        <div class="step-label" style="color:var(--primary);" id="schema-title">Schema</div>
+        <button onclick="document.getElementById('schema-panel').style.display='none'" class="text-[var(--muted-foreground)] text-xs hover:text-[var(--foreground)]">✕ đóng</button>
+      </div>
+      <div class="json-block text-xs" id="schema-content"></div>
+    </div>
+  </div>
+</div>
+
+<!-- === DATA FLOW EXAMPLES TAB === -->
+<div id="tab-data" style="display:none;">
+
+  <!-- Example selector -->
+  <div class="flex gap-2 mb-4 flex-wrap">
+    <button class="ex-btn active" onclick="switchEx(1)">①  Clinic Appointment<br/><span style="font-size:9px;font-weight:400;">Modular Monolith</span></button>
+    <button class="ex-btn" onclick="switchEx(2)">②  Flash-Ticket<br/><span style="font-size:9px;font-weight:400;">Microservices</span></button>
+    <button class="ex-btn" onclick="switchEx(3)">③  Task Tracker<br/><span style="font-size:9px;font-weight:400;">CQRS + Event Sourcing</span></button>
+  </div>
+
+  <div id="ex-content"></div>
+</div>
+
+<script>
+// ── Tab switching ──────────────────────────────────────────────────────────
+function switchTab(t) {
+  document.getElementById('tab-arch').style.display = t === 'arch' ? '' : 'none';
+  document.getElementById('tab-data').style.display = t === 'data' ? '' : 'none';
+  document.querySelectorAll('.tab-btn').forEach((b,i) => {
+    b.classList.toggle('active', (i===0&&t==='arch')||(i===1&&t==='data'));
+  });
+  if (t === 'data') switchEx(currentEx);
+}
+
+// ── Schema panel ───────────────────────────────────────────────────────────
+const schemas = {
+  nl_input: {title:'INPUT — NL Text (user input)', content:`// Đầu vào ngôn ngữ tự nhiên từ stakeholder
+// Không có schema cố định — LLM Normalizer sẽ phân tích
+{
+  "raw_text": "Bối cảnh: Phòng khám nhận đặt lịch theo bác sĩ...",
+  "actors_mentioned": ["Bệnh nhân", "Lễ tân"],
+  "requirements_count_estimated": 5
+}`},
+  requirements: {title:'requirements.json — Output S02 [KB ✓]', content:`{
+  "schema_version": "1.0.0",    // [KB] schema đã có sẵn
+  "status": "confirmed",
+  "revision": 1,
+  "case_id": "case-req-001",
+  "problem_statement": "Phòng khám cần hệ thống đặt lịch...",
+  "actors": [
+    {"id": "ACT-001", "name": "Bệnh nhân", "description": "..."},
+    {"id": "ACT-002", "name": "Lễ tân", "description": "..."}
+  ],
+  "functional_requirements": [
+    {"id": "FR-01", "alias": "R1", "statement": "Bệnh nhân chọn bác sĩ và slot trống...",
+     "acceptance_criteria": "2 req đồng thời → 1 success, 1 conflict"}
+  ],
+  "non_functional_requirements": [
+    {"id": "NFR-01", "alias": "R3", "category": "performance_efficiency",
+     "statement": "p95 ≤ 2000ms dưới 50 users, 30 phút"}
+  ],
+  "constraints": [
+    {"id": "C-01", "alias": "R5", "statement": "Chạy trên hạ tầng nội bộ"}
+  ],
+  "requirements_count": 5
+}`},
+  retrieval: {title:'retrieval-evidence.json — Output S05 [MOCK ⚠️ schema chưa có]', content:`{
+  "schema_version": "1.0.0",    // [MOCK] schema chưa tồn tại, cần tạo
+  "query_case_id": "case-req-001",
+  "index_version": "1.0.0",     // [KB] production-index.json sẵn có
+  "retrieved_cases": [
+    {
+      "rank": 1,
+      "case_id": "case-000037",           // [KB] đã có trong production-index
+      "system_title": "Easy!Appointments",
+      "primary_domain": "healthcare_scheduling",
+      "tfidf_score": 0.576738,            // [KB] tính từ production-index.json
+      "matched_terms": ["appointment","slot","booking","patient"],
+      "architectural_style": "Modular Monolith", // [MOCK] cần thêm field này
+      "key_patterns": ["CRUD API","Relational DB","Session Auth"],
+      "key_tradeoffs": {
+        "strengths": ["Simple deployment","Strong consistency"],
+        "weaknesses": ["Scale limit per instance"]
+      },
+      "rag_context_text": "Easy!Appointments là hệ thống đặt lịch..."
+    }
+  ]
+}`},
+  ir: {title:'architecture-ir.json — Output S07 [MOCK ⚠️ schema chưa có]', content:`{
+  "schema_version": "1.0.0",    // [MOCK] cần tạo architecture-ir.schema.json
+  "candidate_id": "candidate-01",
+  "architectural_style": "Modular Monolith",
+  "rationale": "Deployment đơn giản trên VM, unique constraint PostgreSQL...",
+  "components": [
+    {"alias": "cmp_appointment_api", "name": "AppointmentAPI",
+     "kind": "component", "level": "c4_container", "scope": "system_of_interest",
+     "technologies": ["ASP.NET Core 8"]},     // enum locked → no Kafka/gRPC
+    {"alias": "dat_appointment_db", "name": "AppointmentDB",
+     "kind": "data_store", "technologies": ["PostgreSQL"]},
+    {"alias": "dat_cache", "name": "Cache",
+     "kind": "cache", "technologies": ["Redis"]}
+  ],
+  "relations": [
+    {"relation_id": "rel_01", "source": "cmp_appointment_api",
+     "destination": "dat_appointment_db", "protocol": "PostgreSQL_Wire",
+     "synchronous": true}
+  ],
+  "deployment_nodes": [
+    {"alias": "node_server", "environment": "Docker Compose",   // const
+     "hosted_instances": [
+       {"instance_alias": "inst_api", "component_alias": "cmp_appointment_api",
+        "replicas": 1}
+     ]}
+  ],
+  "capability_compliance": {
+    "stage2_adapter": "dotnet8_dockercompose",   // enum gate
+    "unsupported_features": []
+  }
+}`},
+  validation: {title:'validation.json — Output S07 [KB ✓ schema có sẵn]', content:`{
+  "overall_status": "ready_for_review",  // [KB] schema validation.schema.json
+  "profile_version": "ARCH-KB-PUML/1.1.0",
+  "validated_candidates": 2,
+  "invalid_candidates": 1,
+  "checks": [
+    {"check_id": "CHK-001", "result": "pass", "description": "All components have required stereotypes"},
+    {"check_id": "CHK-002", "result": "pass", "description": "All relations have rel_id prefix"},
+    {"check_id": "CHK-003", "result": "fail",
+     "description": "candidate-03: No decision linked to R4 (DECISION_REQUIREMENT_GAP)"}
+  ],
+  "model_calls": 4,
+  "wall_seconds": 427.153
+}`},
+  review: {title:'design-review.json — Output S08', content:`{
+  "candidate_id": "candidate-01",
+  "disposition": "accepted",     // enum: accepted | request_revision
+  "reviewer": "Architect (HITL)",
+  "feedback_items": [
+    {"requirement": "R3", "severity": "warning",
+     "note": "Chưa có số đo p95 thực; cần benchmark Stage 2"},
+    {"requirement": "R1", "severity": "info",
+     "note": "Unique constraint PostgreSQL đã được khai báo"}
+  ],
+  "stage2_eligible_vote": true   // Architect phê duyệt
+}`},
+  bundle: {title:'manifest.json — S10 Bundle (17 files)', content:`{
+  "status": "verified",
+  "candidate_id": "candidate-01",
+  "file_count": 17,
+  "stage2_eligible": true,      // ← điều kiện cổng T01
+  "review_status": "accepted",
+  "files": {
+    "design": ["architecture-ir.json","component.puml","deployment.puml",
+               "component.svg","deployment.svg","diagram-map.json"],
+    "specs":  ["requirements.json","intake-review.json","source-context.json",
+               "source-provenance.json"],
+    "history":["generation-run.json","revision-history.json","design-review.json"],
+    "package":["manifest.json","README.md"]
+  }
+}`},
+  gate: {title:'T01 — Gate Check Logic', content:`// T01 kiểm tra 4 điều kiện cứng:
+{
+  "candidate_id": "candidate-01",
+  "gate_result": "eligible",    // hoặc "blocked"
+  "checks": {
+    "owner_acceptance": "accepted",          // từ design-review.json
+    "stage2_eligible": true,                 // từ manifest.json
+    "experiment_config_present": true,       // experiment-config.json tồn tại
+    "stage2_adapters_ready": true            // capability-map pass
+  },
+  "blocked_reasons": []         // nếu blocked, liệt kê lý do ở đây
+}`},
+  expconfig: {title:'experiment-config.json — Output T01 [MOCK ⚠️ cần tạo]', content:`{
+  "candidate_id": "candidate-01",
+  "experiment_id": "clinic-exp-001",
+  "architecture_revision": "sha256:a3f7c1...",
+  "resource_configs": {
+    "A": {"api":"1 CPU/1.5 GiB","db":"0.8 CPU/2 GiB","redis":"0.2 CPU/0.5 GiB"},
+    "B": {"api":"2 CPU/3 GiB", "db":"1.6 CPU/4 GiB","redis":"0.4 CPU/1 GiB"}
+  },
+  "workloads": {
+    "W40": {"type":"open","rate_rps":40,"description":"booking load"},
+    "W50": {"type":"closed","users":50,"think_time_s":1,"description":"NFR-01"},
+    "Wscan": {"type":"scan","step_rps":10,"max_rps":180,"refine_rps":2}
+  },
+  "data_seed": 42,
+  "quality_bounds": {"p95_max_ms":2000,"error_rate_max_pct":1},
+  "run_policy": {"warmup_min":5,"measurement_min":30,"repetitions":3,
+                 "aggregation":"median_of_run_summaries"}
+}`},
+  perfcontext: {title:'performance-context.json — Input T03a [MOCK ⚠️ cần đo thực]', content:`{
+  "schema_version": "1.0.0",
+  "candidate_id": "candidate-01",
+  "benchmark_reference": "TeaStore",   // [MOCK] cần đo từ profiling
+  "service_demands": [
+    {"component_alias": "cmp_appointment_api",
+     "mean_cpu_demand_ms": 12.0,
+     "estimation_method": "benchmark_reference",   // enum bắt buộc
+     "estimation_rationale": "[MOCK] TeaStore UserService profiling"},
+    {"component_alias": "dat_appointment_db",
+     "mean_cpu_demand_ms": 10.0, "mean_io_demand_ms": 6.0,
+     "estimation_method": "benchmark_reference",
+     "estimation_rationale": "[MOCK] PostgreSQL write profiling TeaStore"},
+    {"component_alias": "dat_cache",
+     "mean_cpu_demand_ms": 0.5,
+     "estimation_method": "literature",
+     "estimation_rationale": "Redis GET/SET, Redis official benchmarks"}
+  ]
+}`},
+  capmap_proto: {title:'T02a — capability-map.json (Prototype)', content:`{
+  "candidate_id": "candidate-01",
+  "profile": "dotnet8_dockercompose",
+  "feature_mapping": {
+    "api":        "aspnet-http-service",
+    "database":   "postgresql-store",
+    "cache":      "redis-cache",
+    "deployment": "local-docker-compose"
+  },
+  "unsupported_features": []   // nếu có → blocked, không sinh code
+}`},
+  genplan: {title:'T02b — generation-plan.json', content:`{
+  "projects": ["Appointment.Api", "Appointment.Tests"],
+  "services": ["api", "db", "redis"],
+  "connections": ["api -> db: SQL/ORM", "api -> redis: cache invalidation"],
+  "ports_internal": {"api": 8080, "db": 5432, "redis": 6379},
+  "resource_profiles": ["compose.A.yaml", "compose.B.yaml"],
+  "public_endpoints": [
+    "POST /appointments",
+    "POST /appointments/{id}/cancel",
+    "GET  /appointments/{id}"
+  ],
+  "data_seed": 42,
+  "outbound_appointment_data": false
+}`},
+  template: {title:'T02c — Code Templates (file tree)', content:`// Cây file sinh ra từ generation plan
+prototype/
+  src/Appointment.Api/
+    Program.cs
+    Controllers/AppointmentsController.cs
+    Services/AppointmentService.cs
+  tests/Appointment.Tests/
+    RaceConditionTest.cs       // R1
+    CancellationTest.cs        // R2
+    AuthorizationTest.cs       // R4
+  db/001_schema.sql
+  db/002_seed.sql
+  compose.yaml                 // base
+  compose.A.yaml               // resource config A
+  compose.B.yaml               // resource config B
+  load/scenarios.js            // k6 workload scripts`},
+  buildtest: {title:'T02d — Build+Test Results', content:`{
+  "build_status": "pass",
+  "functional_checks": {
+    "R1_race_condition": "pass",   // 2 req cùng slot → 1 success, 1 conflict
+    "R2_cancellation":  "pass",   // audit log đầy đủ, slot trả về
+    "R4_access_control":"pass",   // wrong patient/clinic → 403
+    "R5_no_outbound":   "pass"    // không có outbound traffic
+  },
+  "NFR01": "checked_later_at_T02e",
+  "benchmark_gate": "open"        // chỉ mở khi tất cả checks pass
+}`},
+  bench: {title:'T02e — benchmark-report.json [MOCK ⚠️ chưa đo]', content:`{
+  "sample_only": true,
+  "execution_status": "not_executed",
+  "method": "prototype",
+  "expected_value_kind": "measured_if_executed",
+  "candidate_id": "candidate-01",
+  "experiment_id": "clinic-exp-001",
+  "metrics": {
+    "response_time_p95_ms": {"W40_A": 180},
+    "cpu_utilisation_percent": {"W40_A": 52},
+    "sustainable_throughput_ops_s": {"Wscan_A": 70, "Wscan_B": 112},
+    "scaling_gain": {"B_over_A": 1.60},
+    "nfr01_p95_W50_ms": {"W50_A": 240}
+  },
+  "run_metadata": {"repetitions": 3,
+    "raw_runs": {"W40_A_p95": [176, 180, 184]}
+  }
+}`},
+  capmap_sim: {title:'T03a — PCM Capability + Service Demands', content:`{
+  "capability": "conditional",
+  "demands": [
+    {"component":"cmp_appointment_api","cpu_ms":12,"io_ms":0,
+     "source":"benchmark_reference"},
+    {"component":"dat_appointment_db", "cpu_ms":10,"io_ms":6,
+     "source":"benchmark_reference"},
+    {"component":"dat_cache",          "cpu_ms":0.5,"io_ms":0,
+     "source":"literature"}
+  ],
+  "pcm_limitations": [
+    "Unique constraint race không model được trong PCM queue network",
+    "Authorization không biểu diễn được trong SEFF"
+  ]
+}`},
+  pcm: {title:'T03b — PCM 5 Groups', content:`// 5 nhóm model Palladio Component Model
+{
+  "clinic.repository":       "API, DB, Redis, interfaces; SEFF resource demands",
+  "clinic.system":           "Assembly instances + connectors API-DB, API-Redis",
+  "clinic.allocation":       "Component → resource container theo config A/B",
+  "clinic.resourceenvironment": "CPU/disk, network links, capacity policy",
+  "clinic.usagemodel":       "book_unique_slot flow; W40 open / W50 closed"
+}`},
+  solver: {title:'T03c — Solver Run Config', content:`{
+  "solver": "sample-based PCM simulation",
+  "version": "Palladio 5.x — must be pinned",
+  "seeds": [101, 102, 103],
+  "warmup_s": 300,
+  "measurement_s": 1800,
+  "planned_outputs": [
+    "response-time samples",
+    "successful completions",
+    "CPU busy time",
+    "queue lengths"
+  ]
+}`},
+  simout: {title:'T03d — simulation-report.json [MOCK ⚠️ chưa chạy]', content:`{
+  "sample_only": true,
+  "execution_status": "not_executed",
+  "method": "simulation",
+  "expected_value_kind": "predicted_if_executed",
+  "candidate_id": "candidate-01",
+  "experiment_id": "clinic-exp-001",
+  "metrics": {
+    "response_time_p95_ms": {"W40_A": 150},
+    "cpu_utilisation_percent": {"W40_A": 45},
+    "sustainable_throughput_ops_s": {"Wscan_A": 80, "Wscan_B": 136},
+    "scaling_gain": {"B_over_A": 1.70},
+    "nfr01_p95_W50_ms": {"W50_A": 190}
+  },
+  "run_metadata": {
+    "seeds": [101,102,103], "warmup_s": 300, "measurement_s": 1800,
+    "raw_runs": {"W40_A_p95": [146, 150, 154]}
+  }
+}`},
+  compare: {title:'T04 — comparison-report.json (Final Output)', content:`{
+  "comparison_status": "final",
+  "candidate_id": "candidate-01",
+  "experiment_id": "clinic-exp-001",
+  "metric_comparison": [
+    {"metric_key":"response_time_p95","workload_id":"W40","resource_config":"A",
+     "simulation_value":150,"prototype_value":180,
+     "delta_absolute":-30,"delta_relative_pct":-16.67,"unit":"ms"},
+    {"metric_key":"sustainable_throughput","workload_id":"Wscan","resource_config":"A",
+     "simulation_value":80,"prototype_value":70,
+     "delta_absolute":10,"delta_relative_pct":14.29,"unit":"ops/s"},
+    {"metric_key":"cpu_utilisation","workload_id":"W40","resource_config":"A",
+     "simulation_value":45,"prototype_value":52,
+     "delta_absolute":-7,"delta_relative_pct":-13.46,"unit":"%"},
+    {"metric_key":"scaling_gain","workload_id":"Wscan","resource_config":"A,B",
+     "simulation_value":1.70,"prototype_value":1.60,
+     "delta_absolute":0.10,"delta_relative_pct":6.25,"unit":"ratio"}
+  ],
+  "automatic_winner": null,        // ← luôn null — Architect quyết định
+  "owner_decision": "pending"
+}`}
+};
+
+function showSchema(key) {
+  const s = schemas[key];
+  if (!s) return;
+  document.getElementById('schema-title').textContent = s.title;
+  document.getElementById('schema-content').textContent = s.content;
+  document.getElementById('schema-panel').style.display = '';
+}
+
+// ── Example data ────────────────────────────────────────────────────────────
+let currentEx = 1;
+
+const examples = {
+1: {
+  name: '① Clinic Appointment — Modular Monolith',
+  color: '#3b82f6',
+  style: 'Modular Monolith',
+  tags: ['ASP.NET Core 8','PostgreSQL','Redis','Docker Compose'],
+  requirements: `R1 (FR-01): Đặt lịch theo bác sĩ + slot. Race: 2 req đồng thời → 1 success.
+R2 (FR-02): Lễ tân hủy lịch; ghi audit log; trả slot.
+R3 (NFR-01): p95 ≤ 2000ms / 50 users / 30 phút.
+R4 (NFR-02): Patient chỉ đọc lịch mình; Lễ tân chỉ đọc lịch phòng khám mình.
+R5 (C-01): Chạy trên hạ tầng nội bộ; data không ra ngoài.`,
+  ir_summary: '3 components: AppointmentAPI · AppointmentDB · Redis Cache',
+  ir_components: ['cmp_appointment_api (ASP.NET Core 8)','dat_appointment_db (PostgreSQL)','dat_cache (Redis)'],
+  ir_style: 'Modular Monolith',
+  exp_config: `Workloads: W40 (40 req/s open) | W50 (50 users closed) | Wscan (10→180 req/s)
+Resource A: 2 CPU / 4 GiB total  |  Resource B: 4 CPU / 8 GiB total
+Seed: 42 · Warmup: 5 min · Measure: 30 min · Reps: 3`,
+  perf_demands: [
+    {c:'cmp_appointment_api',cpu:'12ms',io:'0ms',src:'benchmark_reference',mock:true},
+    {c:'dat_appointment_db', cpu:'10ms',io:'6ms',src:'benchmark_reference',mock:true},
+    {c:'dat_cache',          cpu:'0.5ms',io:'0ms',src:'literature',mock:false}
+  ],
+  proto_metrics: {'p95 / W40 / A':'180 ms','CPU / W40 / A':'52%','Throughput / Wscan / A':'70 ops/s','Throughput / Wscan / B':'112 ops/s','Scaling B/A':'1.60×','NFR-01 p95 / W50 / A':'240 ms'},
+  sim_metrics:   {'p95 / W40 / A':'150 ms','CPU / W40 / A':'45%','Throughput / Wscan / A':'80 ops/s','Throughput / Wscan / B':'136 ops/s','Scaling B/A':'1.70×','NFR-01 p95 / W50 / A':'190 ms'},
+  mock_note: 'Service demands (CPU ms) của API và DB cần đo từ TeaStore profiling hoặc prototype thực tế.',
+  pcm_limits: ['Race condition (unique constraint) khó model hóa trong PCM queue network','Authorization không biểu diễn trong SEFF']
+},
+2: {
+  name: '② Flash-Ticket — Microservices',
+  color: '#10b981',
+  style: 'Microservices',
+  tags: ['ASP.NET Core 8 ×4','YARP','RabbitMQ','Redis','PostgreSQL ×2','WorkerService'],
+  requirements: `R1 (FR-01): Đặt vé theo sự kiện + ghế. Race: 100 req / 50 ghế cuối → 50 success.
+R2 (FR-02): Giữ chỗ 10 phút; nếu chưa thanh toán → tự động hủy (expiry worker).
+R3 (NFR-01): p95 ≤ 500ms / 200 users đồng thời.
+R4 (NFR-02): ≥ 500 giao dịch thanh toán/giây không lỗi.
+R5 (C-01): Tuân thủ PCI-DSS Level 2; không lưu card number trực tiếp.`,
+  ir_summary: '8 components: Gateway · TicketSvc · PaymentSvc · ExpiryWorker · TicketDB · PaymentDB · Redis · RabbitMQ',
+  ir_components: [
+    'cmp_api_gateway (YARP .NET 8)', 'cmp_ticket_svc (ASP.NET Core 8)',
+    'cmp_payment_svc (ASP.NET Core 8)', 'cmp_reservation_worker (WorkerService)',
+    'dat_ticket_db (PostgreSQL)', 'dat_payment_db (PostgreSQL)',
+    'dat_cache (Redis)', 'msg_broker (RabbitMQ)'
+  ],
+  ir_style: 'Microservices',
+  exp_config: `Workloads: W200 (200 users closed) | W500 (500 req/s open payment) | Wscan (50→1000 step 10)
+Resource A: 6.5 CPU / 9.5 GiB  |  Resource B: 14 CPU / 22 GiB
+Seed: 99 · Warmup: 5 min · Measure: 30 min · Reps: 3`,
+  perf_demands: [
+    {c:'cmp_ticket_svc',   cpu:'8ms', io:'0ms', src:'benchmark_reference',mock:true},
+    {c:'dat_ticket_db',   cpu:'5ms', io:'4ms', src:'benchmark_reference',mock:true},
+    {c:'cmp_payment_svc', cpu:'15ms',io:'0ms', src:'expert_estimate',mock:true},
+    {c:'dat_cache',       cpu:'0.3ms',io:'0ms',src:'literature',mock:false}
+  ],
+  proto_metrics: {'p95 / W200 / A':'420 ms','CPU / W200 / A':'74%','Throughput / Wscan / A':'480 ops/s','Throughput / Wscan / B':'840 ops/s','Scaling B/A':'1.75×','Payment p95 / W500 / A':'210 ms'},
+  sim_metrics:   {'p95 / W200 / A':'380 ms','CPU / W200 / A':'68%','Throughput / Wscan / A':'520 ops/s','Throughput / Wscan / B':'962 ops/s','Scaling B/A':'1.85×','Payment p95 / W500 / A':'185 ms'},
+  mock_note: 'Tất cả CPU demands (đặc biệt PaymentSvc 15ms) là ước tính. Cần profiling prototype .NET 8 hoặc trích dẫn TeaStore ICPE 2022.',
+  pcm_limits: ['Payment third-party không model được trong PCM','Reservation expiry async delay không biểu diễn đầy đủ','RabbitMQ queue contention cần calibration riêng']
+},
+3: {
+  name: '③ Task Tracker — CQRS + Event Sourcing',
+  color: '#8b5cf6',
+  style: 'CQRS + Event Sourcing',
+  tags: ['CommandAPI','QueryAPI','WorkerService','EventStore (PG)','ReadModel (PG)','Redis','RabbitMQ'],
+  requirements: `R1 (FR-01): Developer tạo/cập nhật task; mọi thay đổi ghi vào event log bất biến.
+R2 (FR-02): Manager xem báo cáo tiến độ tuần; query ≤ 200ms.
+R3 (NFR-01): p95 cập nhật task ≤ 300ms / 50 users.
+R4 (NFR-02): Event log lưu tối thiểu 2 năm, không mất event khi restart.
+R5 (C-01): Hoàn toàn offline, không phụ thuộc dịch vụ ngoài.`,
+  ir_summary: '7 components: CommandAPI · QueryAPI · ProjectionWorker · EventStore · ReadModel · Redis · RabbitMQ',
+  ir_components: [
+    'cmp_command_api (ASP.NET Core 8)', 'cmp_query_api (ASP.NET Core 8)',
+    'cmp_projection_worker (WorkerService)',
+    'dat_event_store (PostgreSQL append-only)', 'dat_read_model (PostgreSQL materialized)',
+    'dat_cache (Redis)', 'msg_broker (RabbitMQ)'
+  ],
+  ir_style: 'CQRS + Event Sourcing',
+  exp_config: `Workloads: W50 (50 users closed write) | WReport (10 req/s report query) | Wscan (5→200 step 1)
+Resource A: 3.5 CPU / 4.5 GiB  |  Resource B: 7 CPU / 9.5 GiB
+Seed: 7 · Warmup: 5 min · Measure: 30 min · Reps: 3`,
+  perf_demands: [
+    {c:'cmp_command_api',     cpu:'6ms', io:'0ms', src:'expert_estimate',mock:true},
+    {c:'dat_event_store',     cpu:'4ms', io:'8ms', src:'expert_estimate',mock:true},
+    {c:'cmp_query_api',       cpu:'2ms', io:'0ms', src:'expert_estimate',mock:true},
+    {c:'dat_read_model',      cpu:'3ms', io:'2ms', src:'expert_estimate',mock:true},
+    {c:'dat_cache',           cpu:'0.2ms',io:'0ms',src:'literature',mock:false}
+  ],
+  proto_metrics: {'p95 write / W50 / A':'240 ms','p95 query / WReport / A':'95 ms','CPU / W50 / A':'61%','Throughput / Wscan / A':'82 ops/s','Throughput / Wscan / B':'147 ops/s','Scaling B/A':'1.80×'},
+  sim_metrics:   {'p95 write / W50 / A':'210 ms','p95 query / WReport / A':'85 ms','CPU / W50 / A':'55%','Throughput / Wscan / A':'95 ops/s','Throughput / Wscan / B':'181 ops/s','Scaling B/A':'1.90×'},
+  mock_note: 'Tất cả CPU/IO demands đều là expert_estimate [MOCK]. Cần đo từ profiling prototype. Đặc biệt cần đo projection lag (EventStore → ReadModel delay) — chưa được model hóa trong PCM.',
+  pcm_limits: ['Projection lag (eventual consistency delay) không model được chính xác trong PCM','Event sourcing append-only write pattern cần calibration riêng','CQRS read/write path tách biệt → PCM cần 2 usage model riêng']
+}
+};
+
+function switchEx(n) {
+  currentEx = n;
+  document.querySelectorAll('.ex-btn').forEach((b,i) => b.classList.toggle('active', i+1===n));
+  renderEx(examples[n]);
+}
+
+function renderEx(e) {
+  const colorBg = e.color + '15';
+  const html = `
+  <div style="border:1.5px solid ${e.color};border-radius:10px;overflow:hidden;">
+    <!-- Header -->
+    <div style="background:${colorBg};padding:10px 14px;border-bottom:1px solid ${e.color}30;">
+      <div style="font-size:13px;font-weight:700;color:${e.color};">${e.name}</div>
+      <div style="font-size:10px;color:var(--muted-foreground);margin-top:3px;">
+        ${e.tags.map(t=>`<span style="background:${e.color}20;color:${e.color};border:1px solid ${e.color}40;padding:1px 6px;border-radius:4px;font-size:9px;font-weight:600;margin-right:3px;">${t}</span>`).join('')}
+      </div>
+    </div>
+    <div style="padding:12px 14px;">
+
+    <!-- STAGE 1 -->
+    <div style="font-size:11px;font-weight:700;color:#3b82f6;margin-bottom:6px;text-transform:uppercase;letter-spacing:0.06em;">Stage 1</div>
+
+    <!-- Requirements -->
+    <details style="margin-bottom:6px;">
+      <summary style="font-size:11px;font-weight:600;color:var(--foreground);padding:6px 8px;background:rgba(59,130,246,0.06);border-radius:6px;border:1px solid rgba(59,130,246,0.2);">
+        📋 INPUT → requirements.json <span style="font-size:9px;color:var(--muted-foreground);margin-left:6px;">S01/S02 · schema sẵn có ✓</span>
+      </summary>
+      <div style="padding:6px 8px 0;font-size:10px;font-family:monospace;color:var(--muted-foreground);white-space:pre;">${e.requirements}</div>
+    </details>
+
+    <!-- Retrieval -->
+    <div style="font-size:10px;color:var(--muted-foreground);text-align:center;padding:2px 0;">↓ S04/S05 · TF-IDF query vào production-index.json</div>
+
+    <!-- IR -->
+    <details style="margin:4px 0;">
+      <summary style="font-size:11px;font-weight:600;color:var(--foreground);padding:6px 8px;background:rgba(59,130,246,0.06);border-radius:6px;border:1px solid rgba(59,130,246,0.2);">
+        🏗️ architecture-ir.json (${e.ir_style}) <span style="font-size:9px;background:rgba(245,158,11,0.15);color:#f59e0b;border:1px solid rgba(245,158,11,0.3);padding:1px 5px;border-radius:4px;margin-left:4px;">MOCK schema</span>
+      </summary>
+      <div style="padding:6px 8px 0;">
+        ${e.ir_components.map(c=>`<div style="font-size:10px;font-family:monospace;color:var(--muted-foreground);padding:1px 0;">• ${c}</div>`).join('')}
+        <div style="font-size:9px;color:var(--muted-foreground);margin-top:4px;">+ validation.json · traceability.json · component.puml · deployment.puml</div>
+      </div>
+    </details>
+
+    <!-- HANDOFF -->
+    <div style="margin:8px 0;padding:6px 10px;background:rgba(245,158,11,0.07);border:1.5px solid #f59e0b40;border-radius:8px;">
+      <div style="font-size:10px;font-weight:700;color:#f59e0b;margin-bottom:4px;">🚦 HANDOFF GATE — T01</div>
+      <div style="font-size:10px;color:var(--muted-foreground);">stage2_eligible: true · owner_acceptance: accepted</div>
+      <div style="font-size:9px;color:var(--muted-foreground);margin-top:2px;font-family:monospace;">${e.exp_config}</div>
+    </div>
+
+    <!-- STAGE 2 -->
+    <div style="font-size:11px;font-weight:700;color:#10b981;margin-bottom:6px;text-transform:uppercase;letter-spacing:0.06em;">Stage 2</div>
+
+    <!-- Service demands -->
+    <details style="margin-bottom:4px;">
+      <summary style="font-size:11px;font-weight:600;color:var(--foreground);padding:6px 8px;background:rgba(139,92,246,0.06);border-radius:6px;border:1px solid rgba(139,92,246,0.2);">
+        📊 performance-context.json (T03a) <span style="font-size:9px;background:rgba(245,158,11,0.15);color:#f59e0b;border:1px solid rgba(245,158,11,0.3);padding:1px 5px;border-radius:4px;margin-left:4px;">service demands MOCK</span>
+      </summary>
+      <div style="padding:6px 8px 0;">
+        <table style="width:100%;font-size:9px;border-collapse:collapse;">
+          <tr style="color:var(--muted-foreground)"><th style="text-align:left;padding:2px 4px;">Component</th><th style="padding:2px 4px;">CPU demand</th><th style="padding:2px 4px;">I/O demand</th><th style="padding:2px 4px;">Source</th><th style="padding:2px 4px;">Status</th></tr>
+          ${e.perf_demands.map(d=>`
+          <tr style="border-top:1px solid var(--border);">
+            <td style="font-family:monospace;padding:2px 4px;color:var(--foreground);">${d.c}</td>
+            <td style="text-align:center;padding:2px 4px;color:var(--foreground);">${d.cpu}</td>
+            <td style="text-align:center;padding:2px 4px;color:var(--foreground);">${d.io}</td>
+            <td style="text-align:center;padding:2px 4px;color:var(--muted-foreground);font-size:8px;">${d.src}</td>
+            <td style="text-align:center;padding:2px 4px;">${d.mock ? '<span style="font-size:8px;background:rgba(245,158,11,0.15);color:#f59e0b;border:1px solid rgba(245,158,11,0.25);padding:1px 4px;border-radius:3px;">MOCK</span>' : '<span style="font-size:8px;background:rgba(16,185,129,0.1);color:#10b981;border:1px solid rgba(16,185,129,0.25);padding:1px 4px;border-radius:3px;">lit</span>'}</td>
+          </tr>`).join('')}
+        </table>
+        <div style="font-size:9px;color:#f59e0b;margin-top:5px;padding:4px 6px;background:rgba(245,158,11,0.07);border-radius:5px;">⚠️ ${e.mock_note}</div>
+      </div>
+    </details>
+
+    <!-- Metrics comparison -->
+    <details open style="margin-bottom:4px;">
+      <summary style="font-size:11px;font-weight:600;color:var(--foreground);padding:6px 8px;background:rgba(239,68,68,0.06);border-radius:6px;border:1px solid rgba(239,68,68,0.2);">
+        📊 T04 · comparison-report.json <span style="font-size:9px;background:rgba(245,158,11,0.15);color:#f59e0b;border:1px solid rgba(245,158,11,0.3);padding:1px 5px;border-radius:4px;margin-left:4px;">values MOCK</span>
+      </summary>
+      <div style="padding:6px 8px 0;">
+        <table style="width:100%;font-size:9px;border-collapse:collapse;">
+          <tr style="color:var(--muted-foreground)">
+            <th style="text-align:left;padding:2px 4px;">Metric</th>
+            <th style="text-align:center;padding:2px 4px;">Simulation<br/>(predicted)</th>
+            <th style="text-align:center;padding:2px 4px;">Prototype<br/>(measured)</th>
+            <th style="text-align:center;padding:2px 4px;">Δ relative</th>
+          </tr>
+          ${Object.entries(e.sim_metrics).map(([k,sv])=>{
+            const pv = e.proto_metrics[k];
+            const sv_n = parseFloat(sv); const pv_n = parseFloat(pv);
+            const delta = pv_n !== 0 ? (((sv_n - pv_n)/Math.abs(pv_n))*100).toFixed(1) : 'N/A';
+            const dc = delta < 0 ? '#10b981' : '#ef4444';
+            return `<tr style="border-top:1px solid var(--border);">
+              <td style="padding:2px 4px;color:var(--foreground);font-family:monospace;font-size:8.5px;">${k}</td>
+              <td style="text-align:center;padding:2px 4px;color:#8b5cf6;font-weight:600;">${sv}</td>
+              <td style="text-align:center;padding:2px 4px;color:#10b981;font-weight:600;">${pv}</td>
+              <td style="text-align:center;padding:2px 4px;color:${dc};font-weight:700;font-size:9px;">${delta}%</td>
+            </tr>`;
+          }).join('')}
+        </table>
+        <div style="font-size:9px;margin-top:5px;padding:4px 6px;background:rgba(239,68,68,0.06);border-radius:5px;color:var(--muted-foreground);">
+          <strong style="color:#ef4444;">automatic_winner: null</strong> — Architect đọc bảng và quyết định.
+          PCM limitations: ${e.pcm_limits.map(l=>`<div>• ${l}</div>`).join('')}
+        </div>
+      </div>
+    </details>
+
+    </div>
+  </div>`;
+  document.getElementById('ex-content').innerHTML = html;
+}
+
+switchEx(1);
+</script>
+</body>
+</html>
