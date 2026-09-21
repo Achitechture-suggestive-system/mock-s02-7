@@ -1,0 +1,12 @@
+{
+  "label_source": "illustrative_manual_precedent_labels_for_research_demo_only",
+  "label_policy": "all_unlisted_candidates_are_unjudged_and_assumed_zero_in_this_demo",
+  "queries": {
+    "CONTEXT-001": {
+      "case-000008:E001": 1
+    },
+    "FR-002": {
+      "case-000026:E005": 1
+    }
+  }
+}

@@ -1,0 +1,39 @@
+{
+  "case_id": "case-900001",
+  "canonical_language": "en",
+  "raw_text": "Medical practices need an integrated electronic health record and medical-practice management system for clinical users who manage patient and practice information. The system must expose healthcare information to authorized external healthcare applications through secure standards-based REST and FHIR interfaces, authenticate API clients, enforce scoped access to health data, and support the documented FHIR R4 and SMART-on-FHIR profiles. This is a detailed stakeholder query designed to preserve the domain vocabulary used by the architecture knowledge base; it does not assert an unsupported deployment topology or numeric production-performance claim.\nActors: Clinical User, Authorized Healthcare Application\nFR-001: The system shall support integrated electronic health records and medical-practice management for a medical provider or practice user who manages patient and practice information.\nFR-002: The system shall expose healthcare information to authorized external healthcare applications through secure standards-based REST and FHIR interfaces.\nFR-003: The system shall authenticate API clients and enforce scoped access to authorized health data for external healthcare applications.\nNFR-001: The healthcare interface shall support the documented FHIR R4 and SMART-on-FHIR profiles for authorized applications.\nC-001: Patient and practice information shall be accessed only by authorized applications through authenticated clients and scoped health-data access within the controlled practice environment.",
+  "problem_statement": "Medical practices need integrated electronic health records and medical-practice management with secure standards-based interfaces for external healthcare applications.",
+  "system_summary": "A healthcare practice-management and electronic-health-record system for a medical provider or practice user. It manages patient and practice information, exposes healthcare information to authorized applications through REST and FHIR interfaces, authenticates API clients, enforces scoped access to health data, and supports FHIR R4 and SMART-on-FHIR interoperability profiles.",
+  "actors": [
+    {"id": "ACT-001", "name": "Clinical User", "description": "A medical provider or practice user who manages patient and practice information."},
+    {"id": "ACT-002", "name": "Authorized Healthcare Application", "description": "An external healthcare application that consumes authorized healthcare information through secure standards-based interfaces."}
+  ],
+  "functional_requirements": [
+    {"id": "FR-001", "statement": "The system shall support integrated electronic health records and medical-practice management for a medical provider or practice user who manages patient and practice information.", "priority": "must"},
+    {"id": "FR-002", "statement": "The system shall expose healthcare information to authorized external healthcare applications through secure standards-based REST and FHIR interfaces.", "priority": "must"},
+    {"id": "FR-003", "statement": "The system shall authenticate API clients and enforce scoped access to authorized health data for external healthcare applications.", "priority": "must"}
+  ],
+  "non_functional_requirements": [
+    {"id": "NFR-INT-001", "category": "interoperability", "statement": "The healthcare interface shall support the documented FHIR R4 and SMART-on-FHIR profiles for authorized applications.", "priority": "should"}
+  ],
+  "constraints": [
+    {"id": "C-001", "statement": "Patient and practice information shall be accessed only by authorized applications through authenticated clients and scoped health-data access."}
+  ],
+  "architecture_hints": {
+    "api": "api.rest",
+    "identity": "identity.oauth2"
+  },
+  "domain_terms": [
+    "healthcare",
+    "electronic health record",
+    "medical practice",
+    "practice management",
+    "patient information",
+    "healthcare information",
+    "authorized application",
+    "scoped access",
+    "FHIR",
+    "FHIR R4",
+    "SMART-on-FHIR"
+  ]
+}
