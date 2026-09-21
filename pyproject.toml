@@ -1,0 +1,23 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "architecture-context-mock"
+version = "0.1.0"
+description = "Evidence-first mock pipeline for grounded component and deployment views"
+requires-python = ">=3.11"
+dependencies = []
+
+[project.scripts]
+arch-context-adaptive = "arch_context_pipeline.adaptive_retrieval:main"
+
+[project.optional-dependencies]
+semantic = ["sentence-transformers>=3.0"]
+reranking = ["sentence-transformers>=3.0"]
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]

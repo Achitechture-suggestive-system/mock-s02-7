@@ -1,0 +1,25 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.invalid/architecture-context-mock/validation.schema.json",
+  "title": "Architecture Context Mock Validation",
+  "type": "object",
+  "required": ["schema_version", "candidate_id", "profile_version", "overall_status", "checks"],
+  "properties": {
+    "schema_version": {"const": "0.1.0-mock"},
+    "candidate_id": {"type": "string"},
+    "profile_version": {"const": "ARCH-KB-PUML/1.1.0"},
+    "overall_status": {"enum": ["invalid", "ready_for_review"]},
+    "checks": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["check_id", "result", "description"],
+        "properties": {
+          "check_id": {"type": "string"},
+          "result": {"enum": ["pass", "fail", "warning"]},
+          "description": {"type": "string"}
+        }
+      }
+    }
+  }
+}

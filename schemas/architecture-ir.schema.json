@@ -1,0 +1,38 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.invalid/architecture-context-mock/architecture-ir.schema.json",
+  "title": "Architecture Context Mock IR",
+  "type": "object",
+  "required": [
+    "schema_version", "candidate_id", "components", "relations",
+    "deployment_environments", "deployment_nodes", "deployment_instances",
+    "deployment_relations", "unresolved_concepts"
+  ],
+  "properties": {
+    "schema_version": {"const": "0.1.0-mock"},
+    "candidate_id": {"type": "string"},
+    "architecture_style": {"type": "string"},
+    "components": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/component"}},
+    "relations": {"type": "array", "items": {"type": "object", "required": ["relation_id", "source", "destination", "kind"]}},
+    "deployment_environments": {"type": "array", "minItems": 1, "items": {"type": "object", "required": ["alias", "kind"]}},
+    "deployment_nodes": {"type": "array", "minItems": 1, "items": {"type": "object", "required": ["alias", "kind"]}},
+    "deployment_instances": {"type": "array", "items": {"type": "object", "required": ["instance_alias", "component_alias", "node_alias"]}},
+    "deployment_relations": {"type": "array", "items": {"type": "object", "required": ["relation_id", "source_node", "destination_node", "logical_relation_id"]}},
+    "unresolved_concepts": {"type": "array", "items": {"type": "object", "required": ["id", "concept", "reason"]}}
+  },
+  "$defs": {
+    "component": {
+      "type": "object",
+      "required": ["alias", "name", "kind", "level", "scope", "technologies"],
+      "properties": {
+        "alias": {"type": "string", "pattern": "^[a-z][a-z0-9_]*$"},
+        "name": {"type": "string", "minLength": 1},
+        "kind": {"type": "string"},
+        "level": {"type": "string"},
+        "scope": {"type": "string"},
+        "roles": {"type": "array", "items": {"type": "string"}},
+        "technologies": {"type": "array", "items": {"type": "string"}}
+      }
+    }
+  }
+}
