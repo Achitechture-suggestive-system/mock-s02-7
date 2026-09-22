@@ -3,7 +3,11 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
-from .pipeline import run_pipeline
+from .pipeline import (
+    DEFAULT_RERANKER_MODEL,
+    DEFAULT_SEMANTIC_MODEL,
+    run_pipeline,
+)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -18,7 +22,13 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--llm-timeout", type=int, default=300, help="LLM request timeout in seconds")
     parser.add_argument(
         "--semantic-model",
-        help="Enable dense semantic retrieval with a SentenceTransformers model, e.g. BAAI/bge-m3",
+        default=DEFAULT_SEMANTIC_MODEL,
+        help=f"Dense embedding model for the default BM25F + semantic RRF path (default: {DEFAULT_SEMANTIC_MODEL})",
+    )
+    parser.add_argument(
+        "--no-semantic",
+        action="store_true",
+        help="Disable dense semantic retrieval and leave RRF with the lexical rank list only",
     )
     parser.add_argument(
         "--semantic-trust-remote-code",
@@ -27,7 +37,13 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--reranker-model",
-        help="Enable cross-encoder reranking on the RRF candidate pool",
+        default=DEFAULT_RERANKER_MODEL,
+        help=f"Cross-encoder reranker for the RRF candidate pool (default: {DEFAULT_RERANKER_MODEL})",
+    )
+    parser.add_argument(
+        "--no-reranker",
+        action="store_true",
+        help="Disable cross-encoder reranking and return the RRF order",
     )
     parser.add_argument(
         "--reranker-trust-remote-code",
@@ -50,8 +66,8 @@ def main() -> None:
         args.model,
         args.ollama_url,
         args.llm_timeout,
-        args.semantic_model,
-        args.reranker_model,
+        None if args.no_semantic else args.semantic_model,
+        None if args.no_reranker else args.reranker_model,
         args.reranker_trust_remote_code,
         args.semantic_trust_remote_code,
     )

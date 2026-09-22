@@ -21,6 +21,7 @@ from arch_context_pipeline.pipeline import (
     run_pipeline,
     validate_candidate,
 )
+from arch_context_pipeline.cli import build_parser
 
 
 KB = Path(r"C:\disk D\KnowledgeBase_SoftwareArchitect")
@@ -48,6 +49,13 @@ class PipelineTests(unittest.TestCase):
         self.assertEqual(self.retrieval["method"]["semantic"]["status"], "not_configured")
         self.assertIn("retrieval_audit", self.retrieval)
         self.assertIn("matched_content_terms", self.retrieval["queries"][0]["evidence"][0])
+
+    def test_cli_defaults_to_hybrid_rrf_and_bge(self):
+        args = build_parser().parse_args(["--input", "input.json", "--kb", "kb", "--out", "out"])
+        self.assertEqual(args.semantic_model, "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2")
+        self.assertEqual(args.reranker_model, "BAAI/bge-reranker-v2-m3")
+        self.assertFalse(args.no_semantic)
+        self.assertFalse(args.no_reranker)
 
     def test_normalize_preserves_raw_text_for_traceability(self):
         self.assertEqual(self.requirements["raw_text"], self.input_data["raw_text"])

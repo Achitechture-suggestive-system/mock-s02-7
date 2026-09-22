@@ -143,8 +143,8 @@ của run đó.
 
 ## 6. Runtime flags và trạng thái được audit
 
-Semantic retrieval và reranking vẫn là optional để mock path không phải tải model
-ngoài. Chạy thật:
+CLI chính bật semantic retrieval và BGE reranking theo mặc định. API thấp tầng
+vẫn cho phép bỏ provider để chạy test/mock deterministic. Chạy thật:
 
 ```powershell
 py -3.13 -m arch_context_pipeline `
@@ -153,7 +153,7 @@ py -3.13 -m arch_context_pipeline `
   --out .\out\clinic-semantic-reranked `
   --top-k 3 `
   --semantic-model sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2 `
-  --reranker-model cross-encoder/mmarco-mMiniLMv2-L12-H384-v1
+  --reranker-model BAAI/bge-reranker-v2-m3
 ```
 
 Lần chạy đầu sẽ tải model từ Hugging Face. Cặp model này không cần remote code.
@@ -177,12 +177,12 @@ final_ranking:
   basis: reranker
 ```
 
-Nếu không truyền hai model flag, trạng thái `not_configured` là đúng và không
-được ghi semantic/reranker score giả. Kết quả thực tế phải đọc từ
+Nếu truyền `--no-semantic` hoặc `--no-reranker`, trạng thái tương ứng là
+`not_configured`; không được ghi score giả. Kết quả thực tế phải đọc từ
 `retrieval-evidence.json`; model name, rank, score và candidate pool không được
 suy ra chỉ từ README.
 
-## 7. Đánh giá BGE-reranker-v2-m3 và MMARCO trong cùng toán pipeline
+## 7. Đánh giá BGE-reranker-v2-m3 và MMARCO baseline trong cùng toán pipeline
 
 BGE-reranker-v2-m3 là một model cụ thể cho hàm `g_phi`, không phải một công
 thức RRF mới. Với cùng candidate pool, hai run có dạng:
@@ -225,12 +225,30 @@ ghi khoảng 0.6B tham số) trong khi MMARCO ghi khoảng 0.1B tham
 số; đây là trade-off capacity/resource, chưa phải latency benchmark của máy
 này.
 
-Kết luận: nếu ưu tiên multilingual quality và đủ tài nguyên, BGE là ứng viên
-đáng benchmark tiếp; nếu ưu tiên footprint và baseline đang được kiểm chứng,
-MMARCO hiện thắng fixture exact top-1. Muốn chọn production cần gold judgments
+Kết luận của fixture lịch sử này chỉ là MMARCO thắng exact top-1 trên đúng
+fixture đó; pipeline hiện tại chọn BGE làm mặc định vì cần một reranker
+multilingual thống nhất. Muốn chọn production cần gold judgments
 độc lập và đo ít nhất Recall@candidate-pool, MRR@k hoặc nDCG@k, kèm latency và
 memory. Không dùng raw reranker score để kết luận relevance hoặc architecture
 correctness.
+
+### Paired benchmark trên 120 input
+
+Run mở rộng giữ nguyên embedding, BM25F, RRF `k=60` và top-50 candidate pool;
+chỉ thay cross-encoder:
+
+| Metric | BGE-v2-m3 | MMARCO |
+|---|---:|---:|
+| Hit@1 | 82.50% | 79.17% |
+| Hit@3 | 94.17% | 95.00% |
+| Hit@5 | 99.17% | 97.50% |
+| Hit@10 | 100.00% | 100.00% |
+| MRR@10 | 0.8894 | 0.8767 |
+
+BGE thắng 15 query theo target rank, MMARCO thắng 11 và 94 query hòa. BGE
+tốt hơn trên paraphrase; MMARCO nhẹ hơn và nhanh hơn trên CPU. Đây là kết quả
+của fixture có một gold evidence/query, không phải benchmark tổng quát. Artifact
+đầy đủ nằm trong `experiments/rrf-vs-bge/comparison-bge-vs-mmarco.json`.
 
 ## 8. Equation-to-code map
 

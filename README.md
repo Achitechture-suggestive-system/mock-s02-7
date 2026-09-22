@@ -190,9 +190,10 @@ py -3.13 -m compileall -q src tests
 
 ## Dense semantic retrieval và reranking
 
-Mock path mặc định không tải model ngoài, nên nếu không truyền model flags thì
-trạng thái `semantic: not_configured`, `reranker: not_configured` là đúng. Để
-chạy đủ hybrid retrieval và cross-encoder reranking:
+CLI chính mặc định chạy đủ hybrid retrieval: BM25F + dense semantic rank được
+hợp nhất bằng RRF, sau đó rerank candidate pool bằng
+`BAAI/bge-reranker-v2-m3`. Vì vậy lần đầu chạy cần có `sentence-transformers`
+và tải model từ Hugging Face:
 
 ```powershell
 py -3.13 -m arch_context_pipeline `
@@ -201,14 +202,24 @@ py -3.13 -m arch_context_pipeline `
   --out .\out\clinic-semantic-reranked `
   --top-k 3 `
   --semantic-model sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2 `
-  --reranker-model cross-encoder/mmarco-mMiniLMv2-L12-H384-v1
+  --reranker-model BAAI/bge-reranker-v2-m3
 ```
 
-Lần đầu chạy sẽ tải `sentence-transformers`, model embedding và model
-reranker. Cặp model trên không cần remote code và là cấu hình multilingual đã
-được chạy kiểm chứng trong checkout này. Nếu thay bằng dòng GTE/mGTE, cần thêm
+Các model trên không cần remote code và là cấu hình đã được chạy kiểm chứng
+trong checkout này. Nếu thay bằng dòng GTE/mGTE, cần thêm
 `--semantic-trust-remote-code` và `--reranker-trust-remote-code` sau khi đã
 kiểm tra model/revision tương ứng.
+
+Muốn chạy mock/lexical-only mà không tải model, dùng rõ ràng:
+
+```powershell
+py -3.13 -m arch_context_pipeline `
+  --input .\examples\clinic_input.json `
+  --kb 'C:\disk D\KnowledgeBase_SoftwareArchitect' `
+  --out .\out\clinic-mock `
+  --no-semantic `
+  --no-reranker
+```
 
 Compatibility note: một lần thử `Alibaba-NLP/gte-multilingual-base` với
 `transformers 5.17` hiện tại dừng trong custom rotary-position implementation;
@@ -262,7 +273,7 @@ audit. Chi tiết công thức và paper nằm ở
 [`docs/retrieval-research.md`](docs/retrieval-research.md) và
 [`docs/references.md`](docs/references.md).
 
-### So sánh BGE-reranker-v2-m3 với reranker hiện tại
+### BGE-reranker-v2-m3 là reranker mặc định
 
 Trong pipeline, BGE không thay đổi BM25F, dense embedding hoặc công thức RRF.
 Nó chỉ thay thế hàm chấm điểm cross-encoder `g_phi` trên cùng candidate pool:
@@ -274,12 +285,12 @@ final_model(q) = sort_desc({(d, s_model(q,d)) : d in C_q})[:top_k]
 ```
 
 Với BGE, `a_model` trong runtime SentenceTransformers hiện tại là `sigmoid`;
-với `cross-encoder/mmarco-mMiniLMv2-L12-H384-v1` là `identity`. Sigmoid là
+MMARCO chỉ được giữ làm baseline lịch sử và dùng `identity`. Sigmoid là
 hàm đơn điệu nên giữ nguyên thứ tự trong BGE, chỉ đổi thang điểm. Vì vậy không
 được so sánh trực tiếp `0.99` của BGE với `10.7` của MMARCO; phải so thứ hạng
 hoặc dùng metric có nhãn.
 
-| Tiêu chí | BGE-reranker-v2-m3 | MMARCO hiện tại |
+| Tiêu chí | BGE-reranker-v2-m3 mặc định | MMARCO baseline lịch sử |
 |---|---|---|
 | Vai trò | Cross-encoder multilingual | Cross-encoder multilingual |
 | Nền tảng/model card | BGE-M3, multilingual, khoảng 0.6B tham số | multilingual MiniLMv2, khoảng 0.1B tham số |
@@ -305,9 +316,8 @@ description `E002`; đây là khác biệt có ý nghĩa nhất của run nhỏ 
 model đều đạt labeled hit@3, nên fixture này chưa đủ để kết luận model nào tốt
 hơn một cách tổng quát.
 
-Kết luận engineering: BGE phù hợp làm lựa chọn quality-first cho corpus
-multilingual nếu chấp nhận footprint lớn hơn; MMARCO nhẹ hơn và hiện cho kết
-quả top-1 tốt hơn trên fixture này. Quyết định production cần tập query/evidence
+Kết luận engineering: pipeline hiện dùng BGE làm mặc định; MMARCO chỉ là
+baseline lịch sử để tái lập kết quả cũ. Quyết định production cần tập query/evidence
 được đánh nhãn độc lập và báo cáo MRR/nDCG/Recall cùng latency, memory và
 candidate-pool recall. Các bundle thực nghiệm là
 [`BGE`](out/clinic-bge-reranked/retrieval-evidence.json) và
@@ -393,6 +403,34 @@ MRR và recall ở top-k, đặc biệt trên paraphrase; RRF đủ tốt và í
 hơn khi truy vấn đã chia sẻ nhiều từ khóa với KB. Không nên suy ra BGE luôn
 tốt hơn: 12/120 ca bị tụt, và nhãn hiện tại là một gold evidence đơn cho mỗi
 query, chưa phải đánh giá graded relevance hoặc chất lượng architecture IR.
+
+### BGE-reranker-v2-m3 so với MMARCO trên cùng 120 input
+
+Đây là phép so sánh hai cross-encoder trên cùng top-50 RRF candidate pool;
+embedding, BM25F và `rrf_k=60` không đổi:
+
+| Metric | BGE-reranker-v2-m3 | MMARCO mMiniLMv2 |
+|---|---:|---:|
+| Hit@1 | 82.50% | 79.17% |
+| Hit@3 | 94.17% | 95.00% |
+| Hit@5 | 99.17% | 97.50% |
+| Hit@10 | 100.00% | 100.00% |
+| MRR@10 | 0.8894 | 0.8767 |
+| Mean target rank | 1.383 | 1.400 |
+
+BGE thắng thứ hạng gold ở 15 input, MMARCO thắng 11 và 94 input hòa. BGE
+thắng rõ hơn với paraphrase (`MRR@10 0.7955` so với `0.7617`); MMARCO nhỉnh
+hơn với query giữ nguyên từ vựng nguồn (`0.9917` so với `0.9833`). Cả hai có
+candidate recall@50 là 100%, nên khác biệt nằm ở rerank cuối, không phải khả
+năng lấy candidate.
+
+Khuyến nghị: giữ BGE làm mặc định cho mục tiêu chất lượng và query đa ngôn ngữ;
+dùng MMARCO khi ưu tiên CPU latency, memory hoặc throughput. Model card ghi
+MMARCO khoảng `0.1B` tham số còn BGE khoảng `0.6B`; trong run 120 input local,
+MMARCO hoàn tất khoảng 89 giây, còn run BGE trước đó khoảng 946 giây gồm load
+model và retrieval. Đây là đo trên checkout/máy hiện tại, không phải claim
+latency phổ quát. Kết quả chi tiết nằm trong
+[`experiments/rrf-vs-bge/comparison-bge-vs-mmarco.json`](experiments/rrf-vs-bge/comparison-bge-vs-mmarco.json).
 
 ## Bundle output và cách đọc “log” cho đúng
 
@@ -532,6 +570,27 @@ là default theo thí nghiệm của paper; code giữ configurable và không t
 Nếu semantic provider không được bật, RRF chỉ nhận lexical rank list và về bản
 chất chỉ biến đổi rank lexical. Nếu reranker được bật, RRF tạo candidate pool
 và cross-encoder quyết định thứ tự evidence cuối.
+
+### Citation và giới hạn diễn giải
+
+- RRF và công thức `sum_r 1/(k + rank_r(d))` được trích từ Cormack, Clarke &
+  Büttcher, *Reciprocal Rank Fusion outperforms Condorcet and Individual Rank
+  Learning Methods*, SIGIR 2009 ([DOI](https://doi.org/10.1145/1571941.1572114)).
+  `k=60` là cấu hình thí nghiệm được báo cáo trong bài, không phải hằng số tối
+  ưu phổ quát cho KB này.
+- Model card BGE có liên kết tới Li et al., *Making Large Language Models A
+  Better Foundation For Dense Retrieval* ([arXiv:2312.15503](https://arxiv.org/abs/2312.15503));
+  đây là bài LLaRA về dense retrieval, không phải bài mô tả trực tiếp
+  `BAAI/bge-reranker-v2-m3`. BGE-M3 được đối chiếu riêng với Chen et al.,
+  *M3-Embedding* ([ACL Findings 2024](https://aclanthology.org/2024.findings-acl.137/));
+  paper này nói về embedding family, không biến thành kết quả reranker của repo.
+- Với đúng checkpoint `BAAI/bge-reranker-v2-m3`, nguồn runtime chính là
+  [model card chính thức](https://huggingface.co/BAAI/bge-reranker-v2-m3): reranker
+  nhận query-document pair và trả similarity score; sigmoid chỉ là phép chuẩn
+  hóa hiển thị. Không gán các kết quả benchmark của paper BGE/M3 thành kết quả
+  của repository này.
+- Cross-encoder reranking sau first-stage retrieval được mô tả theo Nogueira &
+  Cho, *Passage Re-ranking with BERT* ([arXiv:1901.04085](https://arxiv.org/abs/1901.04085)).
 
 Adaptive query-decomposition nằm ngoài main path:
 

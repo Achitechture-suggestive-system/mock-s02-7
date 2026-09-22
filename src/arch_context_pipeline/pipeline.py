@@ -19,6 +19,12 @@ VOCABULARY_VERSION = "1.1.4"
 MOCK_SCHEMA_VERSION = "0.1.0-mock"
 LOCAL_LLM_SCHEMA_VERSION = "0.1.0-local-llm"
 
+# CLI defaults for the real retrieval path. The lower-level `retrieve()` and
+# `run_pipeline()` APIs remain injectable/optional so deterministic tests and
+# mock-only callers do not load external models implicitly.
+DEFAULT_SEMANTIC_MODEL = "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
+DEFAULT_RERANKER_MODEL = "BAAI/bge-reranker-v2-m3"
+
 RETRIEVAL_FIELDS = (
     "domain_tags",
     "problem_statement",
