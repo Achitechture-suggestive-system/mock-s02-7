@@ -24,7 +24,6 @@ paper. Không dùng citation này để claim benchmark của repository.
 - [Ollama API `format` and generation options](https://github.com/ollama/ollama/blob/main/docs/api.md): source for the API contract used by the Ollama adapter.
 - [Ollama Qwen3 model page](https://ollama.com/library/qwen3): model/package reference; it is not a paper result for this repository.
 - [Multilingual MiniLM sentence-embedding model card](https://huggingface.co/sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2): verified dense model used by the recorded hybrid run; model metadata, not a repository benchmark.
-- [Multilingual MMARCO cross-encoder model card](https://huggingface.co/cross-encoder/mmarco-mMiniLMv2-L12-H384-v1): verified reranker used by the recorded hybrid run; model metadata, not a repository benchmark.
 - [BAAI/bge-reranker-v2-m3 model card](https://huggingface.co/BAAI/bge-reranker-v2-m3): multilingual cross-encoder model card, raw-score/sigmoid distinction, and usage reference; the recorded BGE run is a repository fixture comparison, not a general benchmark.
 - ARCH-KB-PUML profile and vocabulary: `C:\disk D\KnowledgeBase_SoftwareArchitect`; local KB artifacts are the authoritative source for profile/version and evidence content in a run.
 

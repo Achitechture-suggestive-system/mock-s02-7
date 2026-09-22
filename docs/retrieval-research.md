@@ -73,6 +73,14 @@ provider tùy biến không khai báo vector đã normalize, code tính cosine v
 độ dài vector ở runtime và trả `0` cho vector zero. Đây là similarity/ranking
 score, không phải probability hoặc confidence.
 
+Trong CLI, model mặc định hiện tại là
+`sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2`; có thể thay
+bằng `BAAI/bge-m3` qua `--semantic-model`. Việc thay model chỉ thay
+`f_theta` — hàm biến query/evidence thành vector — còn phép chấm vẫn là
+cosine của vector đã L2-normalize. Sau đó code sắp xếp giảm dần thành
+`semantic_rank`; RRF dùng rank này cùng `lexical_rank` theo công thức RRF,
+không dùng raw cosine như một xác suất.
+
 Bi-encoder có thể bắt được paraphrase hoặc khác biệt ngôn ngữ mà lexical
 matching bỏ sót, nhưng không nên thay thế BM25F một cách mù quáng. Repository
 dùng dense retrieval như một rank list bổ sung. `BAAI/bge-m3` và
@@ -182,75 +190,7 @@ Nếu truyền `--no-semantic` hoặc `--no-reranker`, trạng thái tương ứ
 `retrieval-evidence.json`; model name, rank, score và candidate pool không được
 suy ra chỉ từ README.
 
-## 7. Đánh giá BGE-reranker-v2-m3 và MMARCO baseline trong cùng toán pipeline
-
-BGE-reranker-v2-m3 là một model cụ thể cho hàm `g_phi`, không phải một công
-thức RRF mới. Với cùng candidate pool, hai run có dạng:
-
-```text
-C_q = top_M(RRF_q)
-s_BGE(q,d)   = sigmoid(g_BGE(q,d))
-s_MMARCO(q,d) = identity(g_MMARCO(q,d))
-rank_model(q) = argsort_d in C_q descending s_model(q,d)
-```
-
-Theo model card BGE, reranker nhận trực tiếp cặp query-document và có thể trả
-raw score hoặc map qua sigmoid về `[0,1]`; model card MMARCO mô tả cùng boundary
-cross-encoder nhưng dùng multilingual MiniLMv2 và huấn luyện trên MMARCO, bản
-dịch máy của MS MARCO sang 14 ngôn ngữ. Xem [BGE model card](https://huggingface.co/BAAI/bge-reranker-v2-m3)
-và [MMARCO model card](https://huggingface.co/cross-encoder/mmarco-mMiniLMv2-L12-H384-v1).
-
-Trong runtime checkout này, `CrossEncoder.activation_fn` xác nhận BGE dùng
-`Sigmoid`, còn MMARCO dùng `Identity`. Vì sigmoid đơn điệu, việc chuẩn hóa BGE
-không thay đổi thứ hạng BGE; nó chỉ thay đổi biểu diễn score. Do đó các score
-giữa hai model không cùng hệ đo và không được dùng để so sánh tuyệt đối.
-
-Run đối chứng dùng `clinic_input.json`, dense model
-`sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2`, RRF `k=60`,
-`top_k=3`, candidate multiplier `5`, tức 15 ứng viên cho mỗi query:
-
-| Metric | BGE | MMARCO | Cách đọc |
-|---|---:|---:|---|
-| Exact labeled top-1 | 4/5 | 5/5 | context + 4 requirement evidence có target; loại C-001 vì thiếu gold evidence |
-| Labeled hit@3 | 5/5 | 5/5 | Cả hai giữ target trong top-3 |
-| Top-1 agreement | 5/6 | 5/6 | Chỉ `FR-001` khác top-1 |
-| Top-3 overlap | 2/3 mỗi query | 2/3 mỗi query | Hai model cùng candidate pool nhưng khác ưu tiên |
-| Kendall tau trên 15 ứng viên | — | 0.438 so với BGE | Chỉ là mức đồng thuận của hai rank list, không phải accuracy |
-
-Ở `FR-001`, MMARCO đưa `case-000008:E003` (functional requirement trực tiếp)
-lên hạng 1; BGE đưa actor evidence `E002` lên hạng 1 và `E003` xuống hạng 2.
-Đây là bằng chứng fixture cho thấy MMARCO tốt hơn ở exact top-1 của run này,
-không phải bằng chứng BGE kém hơn trên domain nói chung. BGE lớn hơn (model card
-ghi khoảng 0.6B tham số) trong khi MMARCO ghi khoảng 0.1B tham
-số; đây là trade-off capacity/resource, chưa phải latency benchmark của máy
-này.
-
-Kết luận của fixture lịch sử này chỉ là MMARCO thắng exact top-1 trên đúng
-fixture đó; pipeline hiện tại chọn BGE làm mặc định vì cần một reranker
-multilingual thống nhất. Muốn chọn production cần gold judgments
-độc lập và đo ít nhất Recall@candidate-pool, MRR@k hoặc nDCG@k, kèm latency và
-memory. Không dùng raw reranker score để kết luận relevance hoặc architecture
-correctness.
-
-### Paired benchmark trên 120 input
-
-Run mở rộng giữ nguyên embedding, BM25F, RRF `k=60` và top-50 candidate pool;
-chỉ thay cross-encoder:
-
-| Metric | BGE-v2-m3 | MMARCO |
-|---|---:|---:|
-| Hit@1 | 82.50% | 79.17% |
-| Hit@3 | 94.17% | 95.00% |
-| Hit@5 | 99.17% | 97.50% |
-| Hit@10 | 100.00% | 100.00% |
-| MRR@10 | 0.8894 | 0.8767 |
-
-BGE thắng 15 query theo target rank, MMARCO thắng 11 và 94 query hòa. BGE
-tốt hơn trên paraphrase; MMARCO nhẹ hơn và nhanh hơn trên CPU. Đây là kết quả
-của fixture có một gold evidence/query, không phải benchmark tổng quát. Artifact
-đầy đủ nằm trong `experiments/rrf-vs-bge/comparison-bge-vs-mmarco.json`.
-
-## 8. Equation-to-code map
+## 7. Equation-to-code map
 
 | Operation | Code | Classification |
 |---|---|---|

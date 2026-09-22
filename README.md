@@ -259,6 +259,14 @@ ranking trong RRF:
 RRF(d) = 1 / (k + r_lex(d)) + 1 / (k + r_sem(d))
 ```
 
+Phân biệt rõ model và toán: trong CLI hiện tại, model embedding mặc định là
+`sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2`, còn
+`BAAI/bge-m3` chỉ được dùng khi truyền qua `--semantic-model BAAI/bge-m3`.
+Hai model đều được chấm bằng cùng một công thức cosine trên vector đã L2
+normalize; thay model chỉ thay hàm sinh embedding `f_theta`, không thay công
+thức similarity. Semantic score chỉ tạo `semantic_rank`; RRF sau đó dùng rank,
+không cộng trực tiếp các giá trị cosine vào lexical score.
+
 Sau đó cross-encoder nhận từng cặp `(query, evidence)` trong candidate pool:
 
 ```text
@@ -284,72 +292,35 @@ s_model(q,d) = a_model(g_phi(q,d))
 final_model(q) = sort_desc({(d, s_model(q,d)) : d in C_q})[:top_k]
 ```
 
-Với BGE, `a_model` trong runtime SentenceTransformers hiện tại là `sigmoid`;
-MMARCO chỉ được giữ làm baseline lịch sử và dùng `identity`. Sigmoid là
-hàm đơn điệu nên giữ nguyên thứ tự trong BGE, chỉ đổi thang điểm. Vì vậy không
-được so sánh trực tiếp `0.99` của BGE với `10.7` của MMARCO; phải so thứ hạng
-hoặc dùng metric có nhãn.
-
-| Tiêu chí | BGE-reranker-v2-m3 mặc định | MMARCO baseline lịch sử |
-|---|---|---|
-| Vai trò | Cross-encoder multilingual | Cross-encoder multilingual |
-| Nền tảng/model card | BGE-M3, multilingual, khoảng 0.6B tham số | multilingual MiniLMv2, khoảng 0.1B tham số |
-| Huấn luyện công bố | Reranker multilingual của BGE | MMARCO, bản dịch máy MS MARCO qua 14 ngôn ngữ |
-| Score trong run này | Sigmoid, quan sát trong `[0.000481, 0.999980]` | Identity/raw, quan sát trong `[-7.633160, 10.786008]` |
-| Candidate pool | Cùng 15 evidence/query | Cùng 15 evidence/query |
-
-Kết quả kiểm chứng trên `examples/clinic_input.json`, với cùng semantic model,
-BM25F, RRF `k=60`, `top_k=3` và candidate multiplier `5`:
-
-| Metric trên fixture có nhãn | BGE | MMARCO |
-|---|---:|---:|
-| Exact labeled top-1 | 4/5 | 5/5 |
-| Labeled hit@3 | 5/5 | 5/5 |
-| Top-1 agreement giữa hai model | 5/6 | 5/6 |
-| Top-3 set overlap giữa hai model | 2/3 ở cả 6 query | 2/3 ở cả 6 query |
-| Kendall tau trên candidate pool 15 item | — | trung bình 0.438 giữa hai rank list |
-
-`C-001` không được tính vào exact labeled metric vì KB hiện tại không có
-evidence constraint tương ứng để làm gold label. Ở `FR-001`, MMARCO đưa trực
-tiếp evidence `case-000008:E003` lên hạng 1, còn BGE đặt nó ở hạng 2 sau actor
-description `E002`; đây là khác biệt có ý nghĩa nhất của run nhỏ này. Cả hai
-model đều đạt labeled hit@3, nên fixture này chưa đủ để kết luận model nào tốt
-hơn một cách tổng quát.
-
-Kết luận engineering: pipeline hiện dùng BGE làm mặc định; MMARCO chỉ là
-baseline lịch sử để tái lập kết quả cũ. Quyết định production cần tập query/evidence
-được đánh nhãn độc lập và báo cáo MRR/nDCG/Recall cùng latency, memory và
-candidate-pool recall. Các bundle thực nghiệm là
-[`BGE`](out/clinic-bge-reranked/retrieval-evidence.json) và
-[`MMARCO`](out/clinic-semantic-reranked/retrieval-evidence.json).
+Với BGE, `a_model` trong runtime SentenceTransformers hiện tại là `sigmoid`.
+Sigmoid là hàm đơn điệu nên giữ nguyên thứ tự BGE; nó chỉ đổi thang điểm hiển
+thị. Không dùng raw score để diễn giải thành xác suất relevance hoặc độ đúng
+của kiến trúc.
 
 ### RRF so với reranker model: ablation đúng cách
 
 Không nên gọi RRF là một reranker model. RRF là thuật toán fusion không học
 tham số; nó hợp nhất rank BM25F và rank semantic để tạo candidate pool hoặc
 final ranking khi chưa bật cross-encoder. So sánh công bằng phải giữ nguyên
-input/KB và đo bốn cấu hình:
+input/KB và đo các cấu hình first-stage và reranking riêng biệt:
 
 ```text
 BM25F
 semantic + RRF
-semantic + RRF + MMARCO
 semantic + RRF + BGE
 ```
 
-Trên cùng `clinic_input.json`, đánh nhãn target cho CONTEXT và bốn
+Trên cùng `clinic_input.json`, đánh nhãn target cho CONTEXT và các
 functional/non-functional requirements, kết quả là:
 
 | Cấu hình | Candidate-pool recall@15 | Hit@1 | Hit@3 | MRR@3 |
 |---|---:|---:|---:|---:|
 | BM25F | 5/5 | 5/5 | 5/5 | 1.000 |
 | Semantic + RRF | 5/5 | 5/5 | 5/5 | 1.000 |
-| Semantic + RRF + MMARCO | 5/5 | 5/5 | 5/5 | 1.000 |
 | Semantic + RRF + BGE | 5/5 | 4/5 | 5/5 | 0.900 |
 
 Diễn giải đúng của fixture này: RRF đã đủ tốt để giữ target và đặt target
-đúng ở top-1; MMARCO không cải thiện thêm top-1 nhưng cũng không làm hỏng thứ
-tự; BGE làm hỏng một top-1 ở `FR-001`. Đây là kết quả của fixture nhỏ, không
+đúng ở top-1; BGE làm hỏng một top-1 ở `FR-001`. Đây là kết quả của fixture nhỏ, không
 phải bằng chứng RRF luôn tốt hơn neural reranker. Muốn kết luận production
 cần nhiều query có judgment độc lập, rồi đo Recall@M trước rerank và MRR/nDCG
 sau rerank.
@@ -403,34 +374,6 @@ MRR và recall ở top-k, đặc biệt trên paraphrase; RRF đủ tốt và í
 hơn khi truy vấn đã chia sẻ nhiều từ khóa với KB. Không nên suy ra BGE luôn
 tốt hơn: 12/120 ca bị tụt, và nhãn hiện tại là một gold evidence đơn cho mỗi
 query, chưa phải đánh giá graded relevance hoặc chất lượng architecture IR.
-
-### BGE-reranker-v2-m3 so với MMARCO trên cùng 120 input
-
-Đây là phép so sánh hai cross-encoder trên cùng top-50 RRF candidate pool;
-embedding, BM25F và `rrf_k=60` không đổi:
-
-| Metric | BGE-reranker-v2-m3 | MMARCO mMiniLMv2 |
-|---|---:|---:|
-| Hit@1 | 82.50% | 79.17% |
-| Hit@3 | 94.17% | 95.00% |
-| Hit@5 | 99.17% | 97.50% |
-| Hit@10 | 100.00% | 100.00% |
-| MRR@10 | 0.8894 | 0.8767 |
-| Mean target rank | 1.383 | 1.400 |
-
-BGE thắng thứ hạng gold ở 15 input, MMARCO thắng 11 và 94 input hòa. BGE
-thắng rõ hơn với paraphrase (`MRR@10 0.7955` so với `0.7617`); MMARCO nhỉnh
-hơn với query giữ nguyên từ vựng nguồn (`0.9917` so với `0.9833`). Cả hai có
-candidate recall@50 là 100%, nên khác biệt nằm ở rerank cuối, không phải khả
-năng lấy candidate.
-
-Khuyến nghị: giữ BGE làm mặc định cho mục tiêu chất lượng và query đa ngôn ngữ;
-dùng MMARCO khi ưu tiên CPU latency, memory hoặc throughput. Model card ghi
-MMARCO khoảng `0.1B` tham số còn BGE khoảng `0.6B`; trong run 120 input local,
-MMARCO hoàn tất khoảng 89 giây, còn run BGE trước đó khoảng 946 giây gồm load
-model và retrieval. Đây là đo trên checkout/máy hiện tại, không phải claim
-latency phổ quát. Kết quả chi tiết nằm trong
-[`experiments/rrf-vs-bge/comparison-bge-vs-mmarco.json`](experiments/rrf-vs-bge/comparison-bge-vs-mmarco.json).
 
 ## Bundle output và cách đọc “log” cho đúng
 
