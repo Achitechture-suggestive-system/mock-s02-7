@@ -124,8 +124,13 @@ Sau khi quit Ollama ở system tray, mở một PowerShell riêng và chạy:
 
 ```powershell
 Set-Location 'C:\disk D\mock-s02-7'
-.\scripts\start-ollama-gpu-cpu.ps1 -Port 11436 -GpuId 0 -ContextLength 32768
+.\scripts\start-ollama-gpu-cpu.ps1 -Port 11436 -GpuId auto -ContextLength 32768
 ```
+
+Không truyền `-GpuId 0` trên Windows này: để `auto` giúp Ollama tự discovery
+CUDA. `CUDA_VISIBLE_DEVICES=0` hiện làm bản Ollama đang cài bỏ qua GPU và chỉ
+khởi động backend CPU. Script cũng không ép `OLLAMA_LLM_LIBRARY=cuda`; Ollama
+cần tự chọn thư viện tương thích đang cài, hiện là `cuda_v13`.
 
 Ở PowerShell khác, kiểm tra server và phân bổ:
 
