@@ -313,11 +313,17 @@ class Reranker(Protocol):
 
 
 class SentenceTransformerEmbeddingProvider:
-    """Optional BGE-M3 adapter; importing it is deferred until requested."""
+    """Optional dense bi-encoder adapter; importing it is deferred."""
 
     vectors_are_l2_normalized = True
 
-    def __init__(self, model_name: str = "BAAI/bge-m3") -> None:
+    def __init__(
+        self,
+        model_name: str = "BAAI/bge-m3",
+        batch_size: int = 32,
+        *,
+        trust_remote_code: bool = False,
+    ) -> None:
         try:
             from sentence_transformers import SentenceTransformer
         except ImportError as exc:  # pragma: no cover - depends on local extras
@@ -325,11 +331,14 @@ class SentenceTransformerEmbeddingProvider:
                 "Semantic retrieval requires the optional sentence-transformers dependency."
             ) from exc
         self.model_name = model_name
-        self._model = SentenceTransformer(model_name)
+        self.batch_size = batch_size
+        self.trust_remote_code = trust_remote_code
+        self._model = SentenceTransformer(model_name, trust_remote_code=trust_remote_code)
 
     def encode(self, texts: Sequence[str]) -> list[list[float]]:
         vectors = self._model.encode(
             list(texts),
+            batch_size=self.batch_size,
             normalize_embeddings=True,
             convert_to_numpy=False,
             show_progress_bar=False,
@@ -338,9 +347,15 @@ class SentenceTransformerEmbeddingProvider:
 
 
 class SentenceTransformerCrossEncoderReranker:
-    """Optional multilingual cross-encoder adapter; score is ranking-only."""
+    """Optional multilingual cross-encoder adapter; scores are ranking-only."""
 
-    def __init__(self, model_name: str = "Alibaba-NLP/gte-multilingual-reranker-base") -> None:
+    def __init__(
+        self,
+        model_name: str = "Alibaba-NLP/gte-multilingual-reranker-base",
+        *,
+        trust_remote_code: bool = False,
+        batch_size: int = 16,
+    ) -> None:
         try:
             from sentence_transformers import CrossEncoder
         except ImportError as exc:  # pragma: no cover - depends on local extras
@@ -348,11 +363,21 @@ class SentenceTransformerCrossEncoderReranker:
                 "Reranking requires the optional sentence-transformers dependency."
             ) from exc
         self.model_name = model_name
-        self._model = CrossEncoder(model_name)
+        self.trust_remote_code = trust_remote_code
+        self.batch_size = batch_size
+        self._model = CrossEncoder(model_name, trust_remote_code=trust_remote_code)
+        self.score_transform = type(self._model.activation_fn).__name__.lower()
 
     def score(self, query: str, documents: Sequence[str]) -> list[float]:
         pairs = [[query, document] for document in documents]
-        return [float(value) for value in self._model.predict(pairs, show_progress_bar=False)]
+        scores = self._model.predict(
+            pairs,
+            batch_size=self.batch_size,
+            show_progress_bar=False,
+        )
+        if hasattr(scores, "tolist"):
+            scores = scores.tolist()
+        return [float(value) for value in scores]
 
 
 def _field_values(projection: Mapping[str, Any]) -> dict[str, list[str]]:
@@ -803,6 +828,7 @@ def retrieve(
             final_ids = candidate_ids[:top_k]
 
         evidence: list[dict[str, Any]] = []
+        final_rank_by_id = {evidence_id: rank for rank, evidence_id in enumerate(final_ids, 1)}
         for rank, evidence_id in enumerate(final_ids, 1):
             unit = unit_by_id[evidence_id]
             case_id = str(unit["case_id"])
@@ -840,6 +866,35 @@ def retrieve(
                     "retrieval_basis": "stakeholder requirement query; architecture hints excluded",
                 },
             })
+        candidate_pool = []
+        for evidence_id in candidate_ids:
+            unit = unit_by_id[evidence_id]
+            fused_row = fused_by_id[evidence_id]
+            candidate_pool.append({
+                "evidence_id": evidence_id,
+                "case_id": unit["case_id"],
+                "evidence_type": unit["evidence_type"],
+                "text": unit["text"],
+                "lexical_rank": lexical_rank[evidence_id],
+                "semantic_rank": semantic_rank.get(evidence_id),
+                "semantic_score": (
+                    round(float(semantic_by_id[evidence_id]["semantic_score"]), 12)
+                    if evidence_id in semantic_by_id else None
+                ),
+                "rrf_rank": fused_row["rrf_rank"],
+                "rrf_score": round(float(fused_row["rrf_score"]), 12),
+                "reranker_rank": reranker_rank.get(evidence_id),
+                "reranker_score": reranker_scores.get(evidence_id),
+                "final_rank": final_rank_by_id.get(evidence_id),
+                "source_path": unit["source_path"],
+                "source_locator": unit["source_locator"],
+            })
+        candidate_pool.sort(
+            key=lambda row: (
+                row["reranker_rank"] if reranker is not None else row["rrf_rank"],
+                row["evidence_id"],
+            )
+        )
         top_evidence = evidence[0] if evidence else None
         top_content_terms = top_evidence["matched_content_terms"] if top_evidence else []
         if not audit_content_terms:
@@ -881,6 +936,8 @@ def retrieve(
             "audit_known_content_terms": known_content_terms,
             "audit_oov_content_terms": oov_content_terms,
             "support_status": support_status,
+            "candidate_pool_size": candidate_count,
+            "candidate_pool": candidate_pool,
             "evidence": evidence,
         })
 
@@ -903,17 +960,26 @@ def retrieve(
             if case_id in case_rows:
                 if evidence["evidence_id"] not in case_rows[case_id]["evidence_ids"]:
                     case_rows[case_id]["evidence_ids"].append(evidence["evidence_id"])
+                case_rows[case_id]["best_final_rank"] = min(case_rows[case_id]["best_final_rank"], evidence["rank"])
                 case_rows[case_id]["best_rrf_rank"] = min(case_rows[case_id]["best_rrf_rank"], evidence["rrf_rank"])
                 case_rows[case_id]["best_rrf_score"] = max(case_rows[case_id]["best_rrf_score"], evidence["rrf_score"])
                 case_rows[case_id]["best_lexical_score"] = max(case_rows[case_id]["best_lexical_score"], evidence["lexical_score"])
+                if evidence["reranker_score"] is not None:
+                    current = case_rows[case_id]["best_reranker_score"]
+                    case_rows[case_id]["best_reranker_score"] = max(
+                        current if current is not None else float("-inf"),
+                        evidence["reranker_score"],
+                    )
                 continue
             pattern = pattern_cache[case_id]
             case_rows[case_id] = {
                 "rank": 0,
                 "case_id": case_id,
+                "best_final_rank": evidence["rank"],
                 "best_rrf_rank": evidence["rrf_rank"],
                 "best_rrf_score": evidence["rrf_score"],
                 "best_lexical_score": evidence["lexical_score"],
+                "best_reranker_score": evidence["reranker_score"],
                 "evidence_ids": [evidence["evidence_id"]],
                 "component_patterns": pattern["component_patterns"],
                 "deployment_patterns": pattern["deployment_patterns"],
@@ -925,8 +991,10 @@ def retrieve(
     if semantic_provider is not None:
         semantic_method = {
             "name": "dense_embedding",
+            "status": "enabled",
             "model": semantic_provider.model_name,
             "vectors_are_l2_normalized": bool(getattr(semantic_provider, "vectors_are_l2_normalized", False)),
+            "trust_remote_code": getattr(semantic_provider, "trust_remote_code", False),
             "similarity": "dot_product_of_l2_normalized_vectors" if getattr(semantic_provider, "vectors_are_l2_normalized", False) else "cosine_similarity",
             "score_interpretation": "retrieval similarity score; not a probability or confidence",
         }
@@ -935,17 +1003,27 @@ def retrieve(
             "name": "dense_embedding",
             "status": semantic_status,
             "model": None,
+            "trust_remote_code": False,
             "score_interpretation": "No semantic score was fabricated because no embedding provider was configured.",
         }
     reranker_method = {
         "name": "cross_encoder" if reranker is not None else None,
         "model": reranker.model_name if reranker is not None else None,
         "status": "enabled" if reranker is not None else "not_configured",
+        "trust_remote_code": getattr(reranker, "trust_remote_code", False) if reranker is not None else False,
+        "candidate_pool": "top-M RRF candidates" if reranker is not None else None,
+        "candidate_multiplier": config.candidate_multiplier if reranker is not None else None,
+        "score_transform": getattr(reranker, "score_transform", None) if reranker is not None else None,
         "score_interpretation": "ranking score; not a probability or confidence",
     }
+    final_ranking_basis = "reranker" if reranker is not None else "rrf"
     ranked_cases = sorted(
         case_rows.values(),
-        key=lambda row: (row["best_rrf_rank"], -row["best_rrf_score"], row["case_id"]),
+        key=lambda row: (
+            row["best_final_rank"],
+            -(row["best_reranker_score"] if reranker is not None and row["best_reranker_score"] is not None else row["best_rrf_score"]),
+            row["case_id"],
+        ),
     )
     for rank, row in enumerate(ranked_cases, 1):
         row["rank"] = rank
@@ -975,6 +1053,10 @@ def retrieve(
                 "score_interpretation": "fusion ranking score; not a probability or confidence",
             },
             "reranker": reranker_method,
+            "final_ranking": {
+                "basis": final_ranking_basis,
+                "description": "Evidence rank after reranking when enabled; otherwise RRF rank.",
+            },
         },
         "query_policy": {
             "construction": "deterministic one-query-per-normalized-requirement plus a small architecture-neutral context query",
@@ -1446,7 +1528,15 @@ def validate_candidate(
     checks.append({"check_id":"CHK-002", "result":"pass" if relation_endpoints else "fail", "description":"All logical relation endpoints resolve."})
     relation_ids = [relation["relation_id"] for relation in ir["relations"]]
     checks.append({"check_id":"CHK-003", "result":"pass" if len(relation_ids) == len(set(relation_ids)) else "fail", "description":"Logical relation IDs are unique."})
-    instance_refs = all(item["component_alias"] in elements and item["component_alias"] != ir["components"][0]["alias"] for item in ir["deployment_instances"])
+    system_aliases = {
+        element["alias"]
+        for element in ir["components"]
+        if element.get("group") is True or element.get("kind") == "software_system"
+    }
+    instance_refs = all(
+        item["component_alias"] in elements and item["component_alias"] not in system_aliases
+        for item in ir["deployment_instances"]
+    )
     allocated = {item["component_alias"] for item in ir["deployment_instances"]}
     required_allocated = {element["alias"] for element in ir["components"] if element["kind"] not in {"actor", "software_system"}}
     allocation_ok = instance_refs and required_allocated == allocated
@@ -1494,6 +1584,8 @@ def generate_prompt(context: dict[str, Any]) -> str:
         "A valid system boundary object has this shape: {\"alias\":\"sys_platform\",\"name\":\"System of interest\",\"kind\":\"software_system\",\"level\":\"c4_software_system\",\"scope\":\"system_of_interest\",\"roles\":[],\"technologies\":[],\"group\":true}.",
         "Use lowercase snake_case aliases, use `sys_platform` for the sole system boundary, and reuse each chosen alias exactly everywhere else.",
         "Do not invent references: every logical relation source/destination must equal a component alias; every deployment instance component_alias must equal a component alias and node_alias must equal a deployment node alias; every deployment relation source_node/destination_node must equal node aliases and logical_relation_id must equal a logical relation_id.",
+        "The literal alias `root` is reserved for the parent field of the system boundary; never use `root` as a logical relation endpoint, deployment endpoint, or component alias. If a relation cannot be grounded in two exact component aliases, omit that relation and record the unsupported concept in `unresolved_concepts`.",
+        "Before returning JSON, enumerate the exact component aliases mentally and verify that every relation source and destination is one of those aliases. Do not use a label, parent name, system name, or inferred alias as an endpoint.",
         "Every logical relation must include `protocols` as an array plus `mode` and `access` strings; use `unknown` when the evidence does not support a more specific value.",
         "Every component whose kind is not `actor` or `software_system` must appear at least once in `deployment_instances`; include audit/logging components too, even if their hosting technology is unknown.",
         "",
@@ -1517,11 +1609,27 @@ def run_pipeline(
     llm_timeout: int = 300,
     semantic_model: str | None = None,
     reranker_model: str | None = None,
+    reranker_trust_remote_code: bool = False,
+    semantic_trust_remote_code: bool = False,
 ) -> dict[str, Any]:
     input_data = read_json(input_path)
     requirements = normalize_input(input_data)
-    semantic_provider = SentenceTransformerEmbeddingProvider(semantic_model) if semantic_model else None
-    reranker = SentenceTransformerCrossEncoderReranker(reranker_model) if reranker_model else None
+    semantic_provider = (
+        SentenceTransformerEmbeddingProvider(
+            semantic_model,
+            trust_remote_code=semantic_trust_remote_code,
+        )
+        if semantic_model
+        else None
+    )
+    reranker = (
+        SentenceTransformerCrossEncoderReranker(
+            reranker_model,
+            trust_remote_code=reranker_trust_remote_code,
+        )
+        if reranker_model
+        else None
+    )
     retrieval = retrieve(
         kb_root,
         requirements,

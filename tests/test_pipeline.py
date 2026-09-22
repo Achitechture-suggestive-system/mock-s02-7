@@ -1,3 +1,4 @@
+import copy
 import json
 import math
 import tempfile
@@ -117,8 +118,38 @@ class PipelineTests(unittest.TestCase):
         result = retrieve(KB, normalize_input(data), top_k=10, semantic_provider=FixtureEmbedding())
         query = next(item for item in result["queries"] if item["requirement_id"] == "FR-VI")
         healthcare = next(item for item in query["evidence"] if item["case_id"] == "case-000008")
+        self.assertEqual(result["method"]["semantic"]["status"], "enabled")
+        self.assertEqual(result["method"]["semantic"]["similarity"], "dot_product_of_l2_normalized_vectors")
         self.assertEqual(healthcare["semantic_rank"], 1)
         self.assertIsNotNone(healthcare["semantic_score"])
+        self.assertIsNotNone(query["candidate_pool"][0]["semantic_score"])
+
+    def test_reranker_becomes_final_ranking_after_rrf(self):
+        class FixtureReranker:
+            model_name = "fixture-cross-encoder"
+            trust_remote_code = False
+
+            def score(self, query, documents):
+                # Deliberately make the final ordering independent of lexical score.
+                return [float(index) for index, _ in enumerate(documents, 1)]
+
+        result = retrieve(
+            KB,
+            self.requirements,
+            top_k=2,
+            reranker=FixtureReranker(),
+        )
+        self.assertEqual(result["method"]["reranker"]["status"], "enabled")
+        self.assertEqual(result["method"]["final_ranking"]["basis"], "reranker")
+        self.assertIsNone(result["method"]["reranker"]["score_transform"])
+        for query in result["queries"]:
+            self.assertEqual(len(query["evidence"]), 2)
+            self.assertEqual(query["candidate_pool_size"], 10)
+            self.assertEqual(len(query["candidate_pool"]), 10)
+            self.assertIsNone(query["candidate_pool"][0]["semantic_score"])
+            self.assertTrue(all(item["reranker_rank"] is not None for item in query["evidence"]))
+            self.assertTrue(all(item["reranker_score"] is not None for item in query["evidence"]))
+            self.assertEqual([item["rank"] for item in query["evidence"]], [1, 2])
 
     def test_cross_view_alias_consistency(self):
         aliases = {element["alias"] for element in self.ir["components"]}
@@ -139,6 +170,15 @@ class PipelineTests(unittest.TestCase):
 
     def test_static_validation_is_ready_for_review(self):
         result = validate_candidate(self.ir, self.component, self.deployment)
+        self.assertEqual(result["overall_status"], "ready_for_review")
+        self.assertTrue(all(check["result"] != "fail" for check in result["checks"]))
+
+    def test_static_validation_does_not_depend_on_component_order(self):
+        reordered = copy.deepcopy(self.ir)
+        reordered["components"] = [*reordered["components"][1:], reordered["components"][0]]
+        component = generate_component_puml(reordered)
+        deployment = generate_deployment_puml(reordered)
+        result = validate_candidate(reordered, component, deployment)
         self.assertEqual(result["overall_status"], "ready_for_review")
         self.assertTrue(all(check["result"] != "fail" for check in result["checks"]))
 

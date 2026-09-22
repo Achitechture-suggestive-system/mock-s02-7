@@ -16,8 +16,24 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--model", default="qwen3:4b", help="Local Ollama model, used with --generator ollama")
     parser.add_argument("--ollama-url", default="http://localhost:11434", help="Ollama base URL")
     parser.add_argument("--llm-timeout", type=int, default=300, help="LLM request timeout in seconds")
-    parser.add_argument("--semantic-model", help="Optional SentenceTransformers model, e.g. BAAI/bge-m3")
-    parser.add_argument("--reranker-model", help="Optional SentenceTransformers cross-encoder model")
+    parser.add_argument(
+        "--semantic-model",
+        help="Enable dense semantic retrieval with a SentenceTransformers model, e.g. BAAI/bge-m3",
+    )
+    parser.add_argument(
+        "--semantic-trust-remote-code",
+        action="store_true",
+        help="Allow a trusted embedding model with custom Hugging Face modeling code",
+    )
+    parser.add_argument(
+        "--reranker-model",
+        help="Enable cross-encoder reranking on the RRF candidate pool",
+    )
+    parser.add_argument(
+        "--reranker-trust-remote-code",
+        action="store_true",
+        help="Allow trusted Hugging Face rerankers with custom model code (required by GTE multilingual)",
+    )
     parser.add_argument("--accept-mock-review", action="store_true", help="Demonstrate the gate only; never treat this as real human acceptance")
     return parser
 
@@ -36,12 +52,16 @@ def main() -> None:
         args.llm_timeout,
         args.semantic_model,
         args.reranker_model,
+        args.reranker_trust_remote_code,
+        args.semantic_trust_remote_code,
     )
     print(f"Generated bundle: {result['output_dir']}")
     cases = result["retrieval"].get("retrieved_cases", [])
     if cases:
         top = cases[0]
-        print(f"Top retrieval: {top['case_id']} (RRF {top['best_rrf_score']:.6f})")
+        basis = result["retrieval"]["method"]["final_ranking"]["basis"]
+        score_key = "best_reranker_score" if basis == "reranker" else "best_rrf_score"
+        print(f"Top retrieval: {top['case_id']} ({basis} {top[score_key]:.6f})")
     else:
         print("Top retrieval: none")
     print(f"Validation: {result['validation']['overall_status']}")

@@ -14,7 +14,8 @@ correctness, runtime behavior, performance hay production readiness.
 English query JSON
   -> normalize requirements
   -> one retrieval query per eligible requirement
-  -> evidence-unit retrieval: BM25F + optional semantic + RRF
+  -> evidence-unit retrieval: BM25F + dense semantic + RRF
+  -> optional cross-encoder reranking of the RRF candidate pool
   -> context package with source provenance
   -> mock or Ollama JSON IR
   -> paired component/deployment PlantUML
@@ -165,6 +166,20 @@ Log server Windows nằm ở `%LOCALAPPDATA%\Ollama\server.log`. Nếu probe cò
 trả `device kernel image is invalid`, chưa nên chạy pipeline; kiểm tra lại
 driver, phiên bản Ollama và log GPU trước.
 
+Hoặc chạy một lệnh qua script đã cấu hình sẵn Ollama generator, semantic
+embedding và BGE reranker:
+
+```powershell
+.\scripts\run-ollama-pipeline.ps1 `
+  -OllamaUrl 'http://127.0.0.1:11436' `
+  -Model 'qwen3:4b' `
+  -PullModel
+```
+
+Script chỉ gọi pipeline sau khi probe `GET /api/version` thành công. Nếu server
+đang dùng cổng mặc định, truyền `-OllamaUrl 'http://127.0.0.1:11434'`. `-PullModel`
+là tùy chọn; bỏ nó nếu model đã có sẵn trong Ollama.
+
 Chạy test:
 
 ```powershell
@@ -172,6 +187,212 @@ $env:PYTHONPATH = "$PWD\src"
 py -3.13 -m unittest discover -s tests -v
 py -3.13 -m compileall -q src tests
 ```
+
+## Dense semantic retrieval và reranking
+
+Mock path mặc định không tải model ngoài, nên nếu không truyền model flags thì
+trạng thái `semantic: not_configured`, `reranker: not_configured` là đúng. Để
+chạy đủ hybrid retrieval và cross-encoder reranking:
+
+```powershell
+py -3.13 -m arch_context_pipeline `
+  --input .\examples\clinic_input.json `
+  --kb 'C:\disk D\KnowledgeBase_SoftwareArchitect' `
+  --out .\out\clinic-semantic-reranked `
+  --top-k 3 `
+  --semantic-model sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2 `
+  --reranker-model cross-encoder/mmarco-mMiniLMv2-L12-H384-v1
+```
+
+Lần đầu chạy sẽ tải `sentence-transformers`, model embedding và model
+reranker. Cặp model trên không cần remote code và là cấu hình multilingual đã
+được chạy kiểm chứng trong checkout này. Nếu thay bằng dòng GTE/mGTE, cần thêm
+`--semantic-trust-remote-code` và `--reranker-trust-remote-code` sau khi đã
+kiểm tra model/revision tương ứng.
+
+Compatibility note: một lần thử `Alibaba-NLP/gte-multilingual-base` với
+`transformers 5.17` hiện tại dừng trong custom rotary-position implementation;
+do đó GTE chưa được đánh dấu là run đã kiểm chứng ở checkout này. Kết quả bên
+dưới dùng checkpoint chuẩn không cần remote code.
+
+Trạng thái cần đọc trong `retrieval-evidence.json`, không suy ra từ command:
+
+```yaml
+semantic:
+  status: enabled
+  similarity: dot_product_of_l2_normalized_vectors
+fusion:
+  name: rrf
+reranker:
+  status: enabled
+  candidate_pool: top-M RRF candidates
+  score_transform: sigmoid | identity
+final_ranking:
+  basis: reranker
+```
+
+Toán semantic được dùng là:
+
+```text
+z_q = f_theta(q),  z_d = f_theta(d)
+hat(z) = z / ||z||_2
+S_sem(q,d) = hat(z_q)^T hat(z_d)
+            = cosine(z_q, z_d)
+```
+
+Query và evidence được encode độc lập bằng bi-encoder. Khi đã normalize L2,
+cosine similarity bằng dot product. Dense ranking được dùng cùng lexical
+ranking trong RRF:
+
+```text
+RRF(d) = 1 / (k + r_lex(d)) + 1 / (k + r_sem(d))
+```
+
+Sau đó cross-encoder nhận từng cặp `(query, evidence)` trong candidate pool:
+
+```text
+s_ce(q,d) = g_phi([CLS] q [SEP] d [SEP])
+final = sort_desc(s_ce)[:top_k]
+```
+
+`semantic_score`, `rrf_score` và `reranker_score` đều là score để xếp hạng,
+không phải xác suất relevance hay bằng chứng architecture correctness. Khi
+reranker bật, `rank` là thứ tự cuối từ reranker; `rrf_rank` vẫn được lưu để
+audit. Chi tiết công thức và paper nằm ở
+[`docs/retrieval-research.md`](docs/retrieval-research.md) và
+[`docs/references.md`](docs/references.md).
+
+### So sánh BGE-reranker-v2-m3 với reranker hiện tại
+
+Trong pipeline, BGE không thay đổi BM25F, dense embedding hoặc công thức RRF.
+Nó chỉ thay thế hàm chấm điểm cross-encoder `g_phi` trên cùng candidate pool:
+
+```text
+C_q = top_M(RRF_q),  M = max(top_k, top_k * candidate_multiplier)
+s_model(q,d) = a_model(g_phi(q,d))
+final_model(q) = sort_desc({(d, s_model(q,d)) : d in C_q})[:top_k]
+```
+
+Với BGE, `a_model` trong runtime SentenceTransformers hiện tại là `sigmoid`;
+với `cross-encoder/mmarco-mMiniLMv2-L12-H384-v1` là `identity`. Sigmoid là
+hàm đơn điệu nên giữ nguyên thứ tự trong BGE, chỉ đổi thang điểm. Vì vậy không
+được so sánh trực tiếp `0.99` của BGE với `10.7` của MMARCO; phải so thứ hạng
+hoặc dùng metric có nhãn.
+
+| Tiêu chí | BGE-reranker-v2-m3 | MMARCO hiện tại |
+|---|---|---|
+| Vai trò | Cross-encoder multilingual | Cross-encoder multilingual |
+| Nền tảng/model card | BGE-M3, multilingual, khoảng 0.6B tham số | multilingual MiniLMv2, khoảng 0.1B tham số |
+| Huấn luyện công bố | Reranker multilingual của BGE | MMARCO, bản dịch máy MS MARCO qua 14 ngôn ngữ |
+| Score trong run này | Sigmoid, quan sát trong `[0.000481, 0.999980]` | Identity/raw, quan sát trong `[-7.633160, 10.786008]` |
+| Candidate pool | Cùng 15 evidence/query | Cùng 15 evidence/query |
+
+Kết quả kiểm chứng trên `examples/clinic_input.json`, với cùng semantic model,
+BM25F, RRF `k=60`, `top_k=3` và candidate multiplier `5`:
+
+| Metric trên fixture có nhãn | BGE | MMARCO |
+|---|---:|---:|
+| Exact labeled top-1 | 4/5 | 5/5 |
+| Labeled hit@3 | 5/5 | 5/5 |
+| Top-1 agreement giữa hai model | 5/6 | 5/6 |
+| Top-3 set overlap giữa hai model | 2/3 ở cả 6 query | 2/3 ở cả 6 query |
+| Kendall tau trên candidate pool 15 item | — | trung bình 0.438 giữa hai rank list |
+
+`C-001` không được tính vào exact labeled metric vì KB hiện tại không có
+evidence constraint tương ứng để làm gold label. Ở `FR-001`, MMARCO đưa trực
+tiếp evidence `case-000008:E003` lên hạng 1, còn BGE đặt nó ở hạng 2 sau actor
+description `E002`; đây là khác biệt có ý nghĩa nhất của run nhỏ này. Cả hai
+model đều đạt labeled hit@3, nên fixture này chưa đủ để kết luận model nào tốt
+hơn một cách tổng quát.
+
+Kết luận engineering: BGE phù hợp làm lựa chọn quality-first cho corpus
+multilingual nếu chấp nhận footprint lớn hơn; MMARCO nhẹ hơn và hiện cho kết
+quả top-1 tốt hơn trên fixture này. Quyết định production cần tập query/evidence
+được đánh nhãn độc lập và báo cáo MRR/nDCG/Recall cùng latency, memory và
+candidate-pool recall. Các bundle thực nghiệm là
+[`BGE`](out/clinic-bge-reranked/retrieval-evidence.json) và
+[`MMARCO`](out/clinic-semantic-reranked/retrieval-evidence.json).
+
+### RRF so với reranker model: ablation đúng cách
+
+Không nên gọi RRF là một reranker model. RRF là thuật toán fusion không học
+tham số; nó hợp nhất rank BM25F và rank semantic để tạo candidate pool hoặc
+final ranking khi chưa bật cross-encoder. So sánh công bằng phải giữ nguyên
+input/KB và đo bốn cấu hình:
+
+```text
+BM25F
+semantic + RRF
+semantic + RRF + MMARCO
+semantic + RRF + BGE
+```
+
+Trên cùng `clinic_input.json`, đánh nhãn target cho CONTEXT và bốn
+functional/non-functional requirements, kết quả là:
+
+| Cấu hình | Candidate-pool recall@15 | Hit@1 | Hit@3 | MRR@3 |
+|---|---:|---:|---:|---:|
+| BM25F | 5/5 | 5/5 | 5/5 | 1.000 |
+| Semantic + RRF | 5/5 | 5/5 | 5/5 | 1.000 |
+| Semantic + RRF + MMARCO | 5/5 | 5/5 | 5/5 | 1.000 |
+| Semantic + RRF + BGE | 5/5 | 4/5 | 5/5 | 0.900 |
+
+Diễn giải đúng của fixture này: RRF đã đủ tốt để giữ target và đặt target
+đúng ở top-1; MMARCO không cải thiện thêm top-1 nhưng cũng không làm hỏng thứ
+tự; BGE làm hỏng một top-1 ở `FR-001`. Đây là kết quả của fixture nhỏ, không
+phải bằng chứng RRF luôn tốt hơn neural reranker. Muốn kết luận production
+cần nhiều query có judgment độc lập, rồi đo Recall@M trước rerank và MRR/nDCG
+sau rerank.
+
+### Benchmark mở rộng: RRF so với BGE trên 120 input
+
+Để tránh kết luận từ fixture 5 query, script
+[`experiments/rrf-vs-bge/evaluate.py`](experiments/rrf-vs-bge/evaluate.py) chạy 60
+target evidence thật trong production KB, mỗi target có hai input: một bản giữ
+từ vựng nguồn và một bản paraphrase. Cả hai cấu hình dùng cùng BM25F, cùng
+`paraphrase-multilingual-MiniLM-L12-v2`, `rrf_k=60`, candidate pool top-50 và
+`top_k=10`. Khác biệt duy nhất là RRF được trả về trực tiếp hay top-50 được
+đưa qua `BAAI/bge-reranker-v2-m3`.
+
+| Metric trên 120 input | Semantic + RRF | Semantic + RRF + BGE | Chênh lệch |
+|---|---:|---:|---:|
+| Candidate recall@50 | 100.00% | 100.00% | 0 |
+| Hit@1 | 81.67% | 82.50% | +0.83 điểm % |
+| Hit@3 | 92.50% | 94.17% | +1.67 điểm % |
+| Hit@5 | 96.67% | 99.17% | +2.50 điểm % |
+| Hit@10 | 96.67% | 100.00% | +3.33 điểm % |
+| MRR@10 | 0.8753 | 0.8894 | +0.0141 |
+| Mean rank khi target nằm trong top-50 | 2.175 | 1.383 | tốt hơn 0.792 hạng |
+
+BGE cải thiện 16 input, làm target tụt 12 input và giữ nguyên 92 input. Hai
+phương án chỉ cùng top-1 ở 77.50% input; overlap top-3 trung bình là 55.83%.
+Điều này cho thấy BGE thực sự đang sắp xếp lại candidate pool, không chỉ đổi
+thang điểm. Trên riêng 60 paraphrase, MRR@10 tăng từ `0.7506` lên `0.7955`
+và Hit@1 tăng từ `63.33%` lên `68.33%`; trên 60 input giữ từ vựng nguồn,
+RRF đạt MRR `1.0000` còn BGE giảm còn `0.9833`. Vì vậy BGE có lợi rõ nhất khi
+query diễn đạt khác evidence, còn RRF mạnh và ổn định với từ khóa trực tiếp.
+
+Các thay đổi đáng chú ý:
+
+- BGE kéo `case-000009:E003` offline learning từ hạng 26 lên 5,
+  `case-000015:E005` GPX từ 46 lên 4, `case-000016:E004` geolocation từ 27
+  lên 1 và `case-000030:E010` store-and-forward từ 4 lên 1.
+- BGE làm tụt một số target vốn đã đúng ở RRF: public-health
+  `case-000020:E003` từ 1 xuống 4, research repository `case-000033:E004`
+  từ 1 xuống 3 và `case-000033:E007` từ 3 xuống 9.
+- Candidate recall bằng nhau ở 100%, nên trong benchmark này BGE không cứu
+  được target bị loại khỏi candidate pool; tác dụng của nó chỉ là precision
+  của thứ tự cuối. Đây là khác biệt quan trọng giữa reranking và retrieval.
+
+Artifact đầy đủ, gồm 120 query, gold evidence, top-10 của mỗi phương án,
+rank/score của target và các ca tăng/giảm hạng, nằm ở
+[`experiments/rrf-vs-bge/benchmark-result.json`](experiments/rrf-vs-bge/benchmark-result.json).
+
+Kết luận engineering có điều kiện: với bộ nhãn hiện tại, BGE thắng nhẹ về
+MRR và recall ở top-k, đặc biệt trên paraphrase; RRF đủ tốt và ít tốn compute
+hơn khi truy vấn đã chia sẻ nhiều từ khóa với KB. Không nên suy ra BGE luôn
+tốt hơn: 12/120 ca bị tụt, và nhãn hiện tại là một gold evidence đơn cho mỗi
+query, chưa phải đánh giá graded relevance hoặc chất lượng architecture IR.
 
 ## Bundle output và cách đọc “log” cho đúng
 
@@ -291,12 +512,13 @@ Lexical branch dùng field-normalized BM25F trên evidence units. Cụ thể, co
 áp dụng pseudo term frequency, field-length normalization và saturation theo
 Robertson & Zaragoza, §3.6, Eq. 3.19–3.21; các giá trị field/default là lựa
 chọn engineering của project, không phải hyperparameter tối ưu được chứng
-minh. Xem [docs/retrieval-research.md](docs/retrieval-research.md) và
-[docs/references.md](docs/references.md).
+minh. Dense branch dùng bi-encoder cosine similarity; cross-encoder chỉ đọc
+candidate pool nhỏ sau RRF. Xem [docs/retrieval-research.md](docs/retrieval-research.md)
+và [docs/references.md](docs/references.md).
 
-Nếu bật semantic provider, score cosine của embedding là một nhánh phụ. Việc
-chọn `BAAI/bge-m3` là adapter/model choice; paper M3-Embedding không chứng minh
-model đó tối ưu cho Knowledge Base này. Hai nhánh được hợp nhất bằng
+Nếu bật semantic provider, score cosine của embedding là một rank list bổ sung.
+Việc chọn `BAAI/bge-m3` là adapter/model choice; paper M3-Embedding không chứng
+minh model đó tối ưu cho Knowledge Base này. Hai nhánh được hợp nhất bằng
 Reciprocal Rank Fusion:
 
 ```text
@@ -306,6 +528,10 @@ RRFscore(d) = sum_r 1 / (k + rank_r(d))
 Đây là công thức trong §1 của Cormack, Clarke & Büttcher (SIGIR 2009). `k=60`
 là default theo thí nghiệm của paper; code giữ configurable và không tuyên bố
 đó là giá trị tối ưu phổ quát.
+
+Nếu semantic provider không được bật, RRF chỉ nhận lexical rank list và về bản
+chất chỉ biến đổi rank lexical. Nếu reranker được bật, RRF tạo candidate pool
+và cross-encoder quyết định thứ tự evidence cuối.
 
 Adaptive query-decomposition nằm ngoài main path:
 
